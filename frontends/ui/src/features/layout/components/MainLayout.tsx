@@ -193,9 +193,6 @@ export const MainLayout: FC<MainLayoutProps> = ({
 
       {/* Data Sources Panel (Right) - Overlay */}
       <DataSourcesPanel />
-
-      {/* Settings Panel (Right) - Overlay */}
-      <SettingsPanel />
     </Flex>
   )
 }

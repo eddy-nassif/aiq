@@ -10,6 +10,7 @@ import { AppBar } from './AppBar'
 const mockToggleSessionsPanel = vi.fn()
 const mockOpenRightPanel = vi.fn()
 const mockCloseRightPanel = vi.fn()
+const mockSetTheme = vi.fn()
 
 vi.mock('../store', () => ({
   useLayoutStore: () => ({
@@ -17,6 +18,8 @@ vi.mock('../store', () => ({
     rightPanel: null,
     openRightPanel: mockOpenRightPanel,
     closeRightPanel: mockCloseRightPanel,
+    theme: 'system',
+    setTheme: mockSetTheme,
   }),
 }))
 
@@ -168,8 +171,9 @@ describe('AppBar', () => {
       })
       await user.click(avatarButton)
 
-      // Popover should show "Default User" and info message
+      // Popover should show "Default User", theme control, and info message
       expect(screen.getByText('Default User')).toBeInTheDocument()
+      expect(screen.getByRole('radiogroup', { name: /theme/i })).toBeInTheDocument()
       expect(screen.getByText('Authentication Not Configured')).toBeInTheDocument()
     })
 

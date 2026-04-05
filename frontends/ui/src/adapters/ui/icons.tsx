@@ -111,6 +111,7 @@ export const Copy = createIcon('copy-generic')
 export const Download = createIcon('download')
 export const Upload = createIcon('upload')
 export const Share = createIcon('share')
+export const OpenExternal = createIcon('open-external')
 export const Refresh = createIcon('refresh')
 
 // ---------------------------------------------------------------------------
