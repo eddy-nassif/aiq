@@ -69,7 +69,7 @@ describe('AppBar', () => {
     expect(screen.getByRole('button', { name: /create new session/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /toggle sessions sidebar/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /add data sources/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /open settings/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /open documentation/i })).not.toBeDisabled()
   })
 
   test('enables action buttons when authenticated', () => {
@@ -78,7 +78,7 @@ describe('AppBar', () => {
     expect(screen.getByRole('button', { name: /create new session/i })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: /toggle sessions sidebar/i })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: /add data sources/i })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: /open settings/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /open documentation/i })).not.toBeDisabled()
   })
 
   test('calls onNewSession when logo button clicked', async () => {
@@ -118,16 +118,6 @@ describe('AppBar', () => {
     await user.click(screen.getByRole('button', { name: /add data sources/i }))
 
     expect(mockOpenRightPanel).toHaveBeenCalledWith('data-sources')
-  })
-
-  test('opens settings panel when Settings clicked', async () => {
-    const user = userEvent.setup()
-
-    render(<AppBar isAuthenticated={true} />)
-
-    await user.click(screen.getByRole('button', { name: /open settings/i }))
-
-    expect(mockOpenRightPanel).toHaveBeenCalledWith('settings')
   })
 
   test('renders Docs button that opens in new tab', () => {
@@ -197,7 +187,7 @@ describe('AppBar', () => {
       expect(screen.getByRole('button', { name: /create new session/i })).not.toBeDisabled()
       expect(screen.getByRole('button', { name: /toggle sessions sidebar/i })).not.toBeDisabled()
       expect(screen.getByRole('button', { name: /add data sources/i })).not.toBeDisabled()
-      expect(screen.getByRole('button', { name: /open settings/i })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: /open documentation/i })).not.toBeDisabled()
     })
 
     test('shows session title when auth is disabled', () => {
