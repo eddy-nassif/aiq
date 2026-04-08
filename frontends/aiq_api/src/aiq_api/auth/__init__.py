@@ -13,26 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pytest fixtures for tests."""
+"""Auth components for the AIQ API frontend."""
 
-from unittest.mock import MagicMock
+from .base import TokenValidator
+from .errors import AuthError
+from .jwt_validator import JWTValidator
+from .middleware import AuthMiddleware
+from .middleware import get_current_user
 
-import pytest
-
-from aiq_agent.common.llm_provider import LLMProvider
-
-
-@pytest.fixture
-def mock_llm():
-    """Create a mock LLM for testing."""
-    llm = MagicMock()
-    llm.ainvoke = MagicMock()
-    return llm
-
-
-@pytest.fixture
-def llm_provider(mock_llm):
-    """Create an LLMProvider with a mock default LLM."""
-    provider = LLMProvider()
-    provider.set_default(mock_llm)
-    return provider
+__all__ = [
+    "AuthError",
+    "AuthMiddleware",
+    "JWTValidator",
+    "TokenValidator",
+    "get_current_user",
+]

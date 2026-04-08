@@ -28,8 +28,8 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = {text = "Apache-2.0"}
 dependencies = [
+    "nvidia-nat-core==1.5.0",
     "nvidia-nat[langchain,weave,async_endpoints,phoenix]==1.5.0",
-    # Provides nat.plugins.eval (required by workspace benchmark evaluators at plugin discovery)
     "nvidia-nat-eval==1.5.0",
     "deepagents>=0.3.0",
     "langgraph-checkpoint-postgres>=3.0.0",
@@ -49,7 +49,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-env>=1.1.0",
     "pre-commit>=3.5.0",
-    "ruff~=0.12",
+    "ruff~=0.15.1",
     "yapf>=0.40.0",
     "mypy>=1.5.0",
 ]
@@ -134,7 +134,7 @@ extend-ignore = [
 combine-as-imports = true
 default-section = "third-party"
 force-single-line = true
-known-first-party = ["aiq", "nat", "nat_*", "_utils"]
+known-first-party = ["aiq", "aiq_api", "nat", "nat_*", "_utils"]
 known-third-party = [
   "agno",
   "autogen",
@@ -173,7 +173,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-env>=1.1.0",
     "pre-commit>=3.5.0",
-    "ruff~=0.12",
+    "ruff~=0.15.1",
     "yapf>=0.40.0",
     "mypy>=1.5.0",
     "dask[distributed]>=2024.1.0",
