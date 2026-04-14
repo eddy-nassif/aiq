@@ -33,6 +33,7 @@ from .base import TokenValidator
 logger = logging.getLogger(__name__)
 
 _MISSING_PYJWT = "PyJWT[cryptography] is required for JWT validation. Install with: pip install 'PyJWT[cryptography]'"
+_MAX_FETCH_BYTES = 64 << 10  # 64 KB cap on OIDC/JWKS responses
 
 
 class JWTValidator(TokenValidator):
@@ -91,7 +92,15 @@ class JWTValidator(TokenValidator):
         url = f"{self.issuer_url}/.well-known/openid-configuration"
         logger.debug("Fetching OIDC discovery from %s", url)
         with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
-            return json.loads(resp.read())
+            raw = resp.read(_MAX_FETCH_BYTES + 1)
+            if len(raw) > _MAX_FETCH_BYTES:
+                logger.warning(
+                    "OIDC discovery response from %s exceeded %d-byte cap; truncating",
+                    url,
+                    _MAX_FETCH_BYTES,
+                )
+                raw = raw[:_MAX_FETCH_BYTES]
+            return json.loads(raw)
 
     def _fetch_jwks_keys(self) -> list[tuple[str | None, Any]]:
         """Fetch JWKS and return (kid, PyJWK) pairs.
@@ -107,7 +116,15 @@ class JWTValidator(TokenValidator):
 
         assert self._jwks_uri is not None  # caller ensures this
         with urllib.request.urlopen(self._jwks_uri, timeout=10) as resp:  # noqa: S310
-            data = json.loads(resp.read())
+            raw = resp.read(_MAX_FETCH_BYTES + 1)
+            if len(raw) > _MAX_FETCH_BYTES:
+                logger.warning(
+                    "JWKS response from %s exceeded %d-byte cap; truncating",
+                    self._jwks_uri,
+                    _MAX_FETCH_BYTES,
+                )
+                raw = raw[:_MAX_FETCH_BYTES]
+            data = json.loads(raw)
 
         keys: list[tuple[str | None, Any]] = []
         for key_data in data.get("keys", []):
