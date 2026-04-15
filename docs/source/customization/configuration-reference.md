@@ -176,8 +176,9 @@ functions:
 | `api_key` | `str` | `None` | Exa API key. Falls back to `EXA_API_KEY` environment variable. |
 | `max_retries` | `int` | `3` | Number of retry attempts on search failure. |
 | `search_type` | `str` | `"auto"` | Exa search type. See options below. |
-| `include_text` | `bool` | `true` | Include full page text in each result. Set to `false` to return metadata only. |
-| `max_content_length` | `int` | `None` | Truncate each result's content to this many characters. Reduces token usage. |
+| `full_text` | `bool` | `false` | Return full page text for each result. Off by default because full text is expensive in tokens; when off, results use `highlights` instead. |
+| `highlights` | `bool` | `true` | Return highlighted snippets for each result. Highlights are token-efficient and are used as the result body when `full_text` is `false`. |
+| `max_content_length` | `int` | `None` | Only applied when `full_text` is `true`. Truncates each result's full page text to this many characters. |
 
 **`search_type` options:**
 

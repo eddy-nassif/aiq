@@ -45,10 +45,27 @@ class ExaWebSearchToolConfig(FunctionBaseConfig, name="exa_web_search"):
         default="auto",
         description="Exa search type: 'auto', 'deep', or 'fast'",
     )
-    include_text: bool = Field(default=True, description="Whether to include full text contents in results")
+    full_text: bool = Field(
+        default=False,
+        description=(
+            "Whether to return full page text for each result. Defaults to False because full text is "
+            "expensive in tokens; when False, only highlights and metadata are returned. Set to True to "
+            "include full page text (optionally capped by `max_content_length`)."
+        ),
+    )
+    highlights: bool = Field(
+        default=True,
+        description=(
+            "Whether to return highlighted snippets for each result. Highlights are token-efficient and "
+            "enabled by default; they are used as the result body when `full_text` is False."
+        ),
+    )
     max_content_length: int | None = Field(
         default=None,
-        description="Max characters per result content. If set, truncates each result to reduce token usage.",
+        description=(
+            "Max characters per result's full page text. Only applied when `full_text=True`; truncates "
+            "each result to reduce token usage."
+        ),
     )
 
 
@@ -129,7 +146,8 @@ async def exa_web_search(
                     "query": question,
                     "num_results": tool_config.max_results,
                     "type": tool_config.search_type,
-                    "text_contents_options": True if tool_config.include_text else False,
+                    "text_contents_options": tool_config.full_text,
+                    "highlights": tool_config.highlights,
                 })
 
                 if isinstance(response, str):
@@ -142,14 +160,19 @@ async def exa_web_search(
                 if not results:
                     raise ValueError("Search returned no results")
 
-                web_search_results = "\n\n---\n\n".join(
-                    [
-                        f'<Document href="{getattr(doc, "url", "") or ""}">\n'
-                        f"<title>\n{getattr(doc, 'title', '') or ''}\n</title>\n"
-                        f"{_truncate_content(getattr(doc, 'text', '') or '')}\n</Document>"
-                        for doc in results
-                    ]
-                )
+                def _render(doc) -> str:
+                    url = getattr(doc, "url", "") or ""
+                    title = getattr(doc, "title", "") or ""
+                    text = _truncate_content(getattr(doc, "text", "") or "")
+                    highlights_list = getattr(doc, "highlights", None) or []
+                    body = text if text else "\n".join(highlights_list)
+                    return (
+                        f'<Document href="{url}">\n'
+                        f"<title>\n{title}\n</title>\n"
+                        f"{body}\n</Document>"
+                    )
+
+                web_search_results = "\n\n---\n\n".join(_render(doc) for doc in results)
                 return web_search_results if web_search_results else "Search returned no results"
 
             except Exception as e:

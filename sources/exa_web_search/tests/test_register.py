@@ -29,10 +29,11 @@ from exa_web_search.register import exa_web_search
 
 
 class _FakeResult:
-    def __init__(self, url, title, text):
+    def __init__(self, url, title, text, highlights=None):
         self.url = url
         self.title = title
         self.text = text
+        self.highlights = highlights
 
 
 class _FakeResponse:
@@ -77,7 +78,8 @@ class TestExaWebSearchToolConfig:
         assert config.api_key is None
         assert config.max_retries == 3
         assert config.search_type == "auto"
-        assert config.include_text is True
+        assert config.full_text is False
+        assert config.highlights is True
         assert config.max_content_length is None
 
     def test_all_fields(self):
@@ -86,14 +88,16 @@ class TestExaWebSearchToolConfig:
             api_key=SecretStr("sk-test"),
             max_retries=1,
             search_type="deep",
-            include_text=False,
+            full_text=True,
+            highlights=False,
             max_content_length=50,
         )
         assert config.max_results == 10
         assert config.api_key.get_secret_value() == "sk-test"
         assert config.max_retries == 1
         assert config.search_type == "deep"
-        assert config.include_text is False
+        assert config.full_text is True
+        assert config.highlights is False
         assert config.max_content_length == 50
 
     def test_inherits_from_function_base_config(self):
@@ -151,22 +155,38 @@ class TestExaWebSearchLive:
         assert payload["query"] == "query"
         assert payload["num_results"] == 2
         assert payload["type"] == "auto"
-        assert payload["text_contents_options"] is True
+        assert payload["text_contents_options"] is False
+        assert payload["highlights"] is True
 
-    async def test_include_text_false_passes_false(self, fake_langchain_exa, monkeypatch):
+    async def test_full_text_true_passes_text_contents_options_true(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
         fake_langchain_exa.ainvoke.return_value = _FakeResponse(
-            [_FakeResult("https://a.example", "A", "")]
+            [_FakeResult("https://a.example", "A", "full body")]
         )
 
-        config = ExaWebSearchToolConfig(include_text=False)
+        config = ExaWebSearchToolConfig(full_text=True)
         builder = MagicMock()
         async with exa_web_search(config, builder) as info:
             out = await info.single_fn("q")
 
         (payload,), _ = fake_langchain_exa.ainvoke.call_args
-        assert payload["text_contents_options"] is False
-        assert "https://a.example" in out
+        assert payload["text_contents_options"] is True
+        assert payload["highlights"] is True
+        assert "full body" in out
+
+    async def test_highlights_rendered_when_text_absent(self, fake_langchain_exa, monkeypatch):
+        monkeypatch.setenv("EXA_API_KEY", "sk-env")
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse([
+            _FakeResult("https://a.example", "A", "", highlights=["snippet one", "snippet two"]),
+        ])
+
+        config = ExaWebSearchToolConfig()
+        builder = MagicMock()
+        async with exa_web_search(config, builder) as info:
+            out = await info.single_fn("q")
+
+        assert "snippet one" in out
+        assert "snippet two" in out
 
     async def test_truncates_long_query(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
