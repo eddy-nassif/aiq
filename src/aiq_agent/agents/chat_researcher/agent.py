@@ -202,13 +202,22 @@ class ChatResearcherAgent:
                     available_documents=state.available_documents,
                 )
                 result = await self.shallow_research_fn(shallow_state)
-            except EmptySourceRegistryError:
+            except EmptySourceRegistryError as exc:
                 logger.warning("Shallow research produced no verifiable sources")
-                err_msg = (
-                    "The search tools did not return any results for this question. "
-                    "This may be due to a temporary issue or the question may need to be rephrased. "
-                    "Please try again."
-                )
+                if exc.unavailable_tools:
+                    from aiq_agent.common.tool_validation import format_user_facing_tool_error
+
+                    err_msg = format_user_facing_tool_error(
+                        "shallow research",
+                        exc.unavailable_tools,
+                        exc.available_count,
+                    )
+                else:
+                    err_msg = (
+                        "The search tools did not return any results for this question. "
+                        "This may be due to a temporary issue or the question may need to be rephrased. "
+                        "Please try again."
+                    )
                 # confidence="high" reflects certainty that an error occurred and that the error
                 # message is the correct response — not uncertainty about the answer quality.
                 # escalate_to_deep=False because retrying deep research will not resolve a
@@ -284,13 +293,22 @@ class ChatResearcherAgent:
             )
             try:
                 result = await self.deep_research_fn(deep_state)
-            except EmptySourceRegistryError:
+            except EmptySourceRegistryError as exc:
                 logger.warning("Deep research produced no verifiable sources")
-                err_msg = (
-                    "The search tools did not return any results for this question. "
-                    "This may be due to a temporary issue or the question may need to be rephrased. "
-                    "Please try again."
-                )
+                if exc.unavailable_tools:
+                    from aiq_agent.common.tool_validation import format_user_facing_tool_error
+
+                    err_msg = format_user_facing_tool_error(
+                        "deep research",
+                        exc.unavailable_tools,
+                        exc.available_count,
+                    )
+                else:
+                    err_msg = (
+                        "The search tools did not return any results for this question. "
+                        "This may be due to a temporary issue or the question may need to be rephrased. "
+                        "Please try again."
+                    )
                 return {"messages": [AIMessage(content=err_msg)]}
             except Exception as e:
                 if _AuthError and isinstance(e, _AuthError):
