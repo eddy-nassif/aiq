@@ -121,6 +121,8 @@ async def exa_web_search(
         )
         return
 
+    exa_search = ExaSearchResults()
+
     async def _exa_web_search(question: str) -> str:
         """Retrieves relevant contexts from web search (using Exa) for the given question.
 
@@ -132,8 +134,6 @@ async def exa_web_search(
         """
         if len(question) > 400:
             question = question[:397] + "..."
-
-        exa_search = ExaSearchResults()
 
         def _truncate_content(content: str) -> str:
             if tool_config.max_content_length and len(content) > tool_config.max_content_length:
@@ -187,6 +187,8 @@ async def exa_web_search(
                         )
                     return f"Error: Web search failed - {error_msg}"
                 await asyncio.sleep(2**attempt)
+
+        return "Error: Search failed after all retries"
 
     yield FunctionInfo.from_fn(
         _exa_web_search,
