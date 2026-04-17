@@ -74,13 +74,13 @@ def _clear_env(monkeypatch):
 class TestExaWebSearchToolConfig:
     def test_defaults(self):
         config = ExaWebSearchToolConfig()
-        assert config.max_results == 3
+        assert config.max_results == 5
         assert config.api_key is None
         assert config.max_retries == 3
         assert config.search_type == "auto"
         assert config.full_text is False
         assert config.highlights is True
-        assert config.max_content_length is None
+        assert config.max_content_length == 10000
 
     def test_all_fields(self):
         config = ExaWebSearchToolConfig(

@@ -1467,14 +1467,12 @@ name = "exa-web-search"
 version = "1.0.0"
 source = { editable = "sources/exa_web_search" }
 dependencies = [
-    { name = "httpx" },
     { name = "langchain-exa" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.24.0" },
     { name = "langchain-exa", specifier = ">=1.1.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
 ]
