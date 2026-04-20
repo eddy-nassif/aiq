@@ -22,10 +22,9 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import SecretStr
-
 from exa_web_search.register import ExaWebSearchToolConfig
 from exa_web_search.register import exa_web_search
+from pydantic import SecretStr
 
 
 class _FakeResult:
