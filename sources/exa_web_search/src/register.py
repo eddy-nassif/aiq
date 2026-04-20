@@ -142,13 +142,15 @@ async def exa_web_search(
 
         for attempt in range(tool_config.max_retries):
             try:
-                response = await exa_search.ainvoke({
-                    "query": question,
-                    "num_results": tool_config.max_results,
-                    "type": tool_config.search_type,
-                    "text_contents_options": tool_config.full_text,
-                    "highlights": tool_config.highlights,
-                })
+                response = await exa_search.ainvoke(
+                    {
+                        "query": question,
+                        "num_results": tool_config.max_results,
+                        "type": tool_config.search_type,
+                        "text_contents_options": tool_config.full_text,
+                        "highlights": tool_config.highlights,
+                    }
+                )
 
                 if isinstance(response, str):
                     raise ValueError(f"Search returned an error: {response}")
@@ -166,11 +168,7 @@ async def exa_web_search(
                     text = _truncate_content(getattr(doc, "text", "") or "")
                     highlights_list = getattr(doc, "highlights", None) or []
                     body = text if text else "\n".join(highlights_list)
-                    return (
-                        f'<Document href="{url}">\n'
-                        f"<title>\n{title}\n</title>\n"
-                        f"{body}\n</Document>"
-                    )
+                    return f'<Document href="{url}">\n<title>\n{title}\n</title>\n{body}\n</Document>'
 
                 web_search_results = "\n\n---\n\n".join(_render(doc) for doc in results)
                 return web_search_results if web_search_results else "Search returned no results"

@@ -119,9 +119,7 @@ class TestExaWebSearchStub:
 
 class TestExaWebSearchLive:
     async def test_api_key_from_config_sets_env(self, fake_langchain_exa):
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
-            [_FakeResult("https://a.example", "A", "body a")]
-        )
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse([_FakeResult("https://a.example", "A", "body a")])
         config = ExaWebSearchToolConfig(api_key=SecretStr("sk-from-config"))
         builder = MagicMock()
 
@@ -134,10 +132,12 @@ class TestExaWebSearchLive:
 
     async def test_successful_search_formats_documents(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse([
-            _FakeResult("https://a.example", "Title A", "Body A"),
-            _FakeResult("https://b.example", "Title B", "Body B"),
-        ])
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
+            [
+                _FakeResult("https://a.example", "Title A", "Body A"),
+                _FakeResult("https://b.example", "Title B", "Body B"),
+            ]
+        )
 
         config = ExaWebSearchToolConfig(max_results=2)
         builder = MagicMock()
@@ -159,9 +159,7 @@ class TestExaWebSearchLive:
 
     async def test_full_text_true_passes_text_contents_options_true(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
-            [_FakeResult("https://a.example", "A", "full body")]
-        )
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse([_FakeResult("https://a.example", "A", "full body")])
 
         config = ExaWebSearchToolConfig(full_text=True)
         builder = MagicMock()
@@ -175,9 +173,11 @@ class TestExaWebSearchLive:
 
     async def test_highlights_rendered_when_text_absent(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse([
-            _FakeResult("https://a.example", "A", "", highlights=["snippet one", "snippet two"]),
-        ])
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
+            [
+                _FakeResult("https://a.example", "A", "", highlights=["snippet one", "snippet two"]),
+            ]
+        )
 
         config = ExaWebSearchToolConfig()
         builder = MagicMock()
@@ -189,9 +189,7 @@ class TestExaWebSearchLive:
 
     async def test_truncates_long_query(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
-            [_FakeResult("u", "t", "body")]
-        )
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse([_FakeResult("u", "t", "body")])
 
         config = ExaWebSearchToolConfig()
         builder = MagicMock()
@@ -205,9 +203,7 @@ class TestExaWebSearchLive:
 
     async def test_truncates_content(self, fake_langchain_exa, monkeypatch):
         monkeypatch.setenv("EXA_API_KEY", "sk-env")
-        fake_langchain_exa.ainvoke.return_value = _FakeResponse(
-            [_FakeResult("u", "t", "abcdefghijklmnop")]
-        )
+        fake_langchain_exa.ainvoke.return_value = _FakeResponse([_FakeResult("u", "t", "abcdefghijklmnop")])
 
         config = ExaWebSearchToolConfig(max_content_length=8)
         builder = MagicMock()
