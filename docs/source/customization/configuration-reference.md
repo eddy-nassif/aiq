@@ -153,6 +153,40 @@ functions:
 | `advanced_search` | `bool` | `false` | Use Tavily's advanced search mode for deeper, more thorough results. |
 | `max_content_length` | `int` | `None` | Truncate each result's content to this many characters. Reduces token usage. |
 
+### `exa_web_search`
+
+Web search powered by the [Exa API](https://exa.ai/) via `langchain-exa`.
+
+```yaml
+functions:
+  web_search_tool:
+    _type: exa_web_search
+    max_results: 5
+    full_text: true
+    max_content_length: 10000
+
+  deep_web_search_tool:
+    _type: exa_web_search
+    max_results: 5
+    search_type: deep
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_results` | `int` | `5` | Maximum number of search results to return. |
+| `api_key` | `str` | `None` | Exa API key. Falls back to `EXA_API_KEY` environment variable. |
+| `max_retries` | `int` | `3` | Number of retry attempts on search failure. |
+| `search_type` | `str` | `"auto"` | Exa search type. See options below. |
+| `full_text` | `bool` | `false` | Return full page text for each result. Off by default because full text is expensive in tokens; when false, results use `highlights` instead. |
+| `highlights` | `bool` | `true` | Return highlighted snippets for each result. Highlights are token-efficient and are used as the result body when `full_text` is `false`. |
+| `max_content_length` | `int` | `10000` | Only applied when `full_text` is `true`. Truncates each result's full page text to this many characters. Set to `None` to disable truncation. |
+
+**`search_type` options:**
+
+- **`auto`** (default) -- Let Exa pick the best strategy for the query. Balances latency and recall; a safe default for general research workloads.
+- **`fast`** -- Optimized for low latency. Returns results quickly at the cost of recall and semantic depth. Use for interactive UIs, high-volume calls, or when the query is narrow and keyword-like.
+- **`deep`** -- Optimized for thoroughness. Runs a more expensive semantic search with broader retrieval. Use for research-quality queries where completeness matters more than speed.
+
 ### `paper_search`
 
 Academic paper search through Google Scholar (using the [Serper API](https://serper.dev/)).
