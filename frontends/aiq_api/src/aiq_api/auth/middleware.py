@@ -32,7 +32,7 @@ NAT workflow functions (which do not receive the ASGI ``Request`` object)
 can read the caller type without framework coupling.
 
     from aiq_api.auth.middleware import get_current_user
-    user = get_current_user()          # {"type": "internal"|"anonymous", ...}
+    user = get_current_user()          # {"type": "jwt"|"internal"|"anonymous"|...}
     skip = user.get("skip_clarifier")  # True / False
 
 ENVIRONMENT VARIABLES
@@ -60,6 +60,7 @@ ENVIRONMENT VARIABLES
 import json
 import logging
 import os
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -86,6 +87,16 @@ def get_current_user() -> dict[str, Any]:
     the middleware is not registered or when called outside a request context.
     """
     return _current_user.get()
+
+
+@contextmanager
+def user_context(user: dict[str, Any]):
+    """Temporarily bind a resolved caller identity in the auth ContextVar."""
+    token = _current_user.set(user)
+    try:
+        yield
+    finally:
+        _current_user.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +128,86 @@ def _load_external_hostnames() -> set[str]:
     env = os.getenv("AIQ_EXTERNAL_HOSTNAMES", "")
     names = {h.strip() for h in env.split(",") if h.strip()}
     return names
+
+
+def is_external_request(headers: dict[bytes, bytes], external_hostnames: set[str] | None = None) -> bool:
+    """Return ``True`` when the Host header matches an external-facing hostname."""
+    host = headers.get(b"host", b"").decode().split(":")[0]
+    return host in (external_hostnames or _load_external_hostnames())
+
+
+def is_headless_request(headers: dict[bytes, bytes]) -> bool:
+    """Return ``True`` for headless callers that should skip the clarifier."""
+    return headers.get(b"x-aiq-mode", b"").decode().lower() == "headless"
+
+
+def extract_auth_token(headers: dict[bytes, bytes]) -> str | None:
+    """Extract a bearer token or idToken cookie from ASGI headers."""
+    auth = headers.get(b"authorization", b"").decode()
+    if auth.startswith("Bearer "):
+        return auth[7:]
+
+    cookie = headers.get(b"cookie", b"").decode()
+    for part in cookie.split(";"):
+        part = part.strip()
+        if part.startswith("idToken="):
+            return part[8:]
+    return None
+
+
+async def validate_token_with_validators(token: str, validators: list) -> dict[str, Any] | None:
+    """Try validators in order and return the first successful identity dict."""
+    for validator in validators:
+        if validator.can_handle(token):
+            user = await validator.validate(token)
+            if user is not None:
+                return user
+    logger.debug("Token rejected by all %d configured validator(s)", len(validators))
+    return None
+
+
+def detect_internal_caller(headers: dict[bytes, bytes]) -> dict[str, Any]:
+    """Classify an internal request without validating any presented token."""
+    token = extract_auth_token(headers)
+    headless = is_headless_request(headers)
+    if token:
+        return {"type": "unverified_jwt", "token": token, "skip_clarifier": headless}
+    return {"type": "internal", "skip_clarifier": headless}
+
+
+async def resolve_request_user(
+    headers: dict[bytes, bytes],
+    *,
+    validators: list,
+    require_auth: bool,
+    external_hostnames: set[str] | None = None,
+) -> tuple[dict[str, Any] | None, int | None, bool]:
+    """Resolve request identity from validated credentials when present.
+
+    Returns a tuple of:
+      - resolved user dict, or None when the request should be rejected
+      - HTTP status code to use on rejection, or None on success
+      - whether the request was classified as external
+    """
+    is_external = is_external_request(headers, external_hostnames)
+    token = extract_auth_token(headers)
+
+    if token:
+        user = await validate_token_with_validators(token, validators)
+        if user is not None:
+            if is_headless_request(headers):
+                user["skip_clarifier"] = True
+            return user, None, is_external
+
+        if is_external and require_auth:
+            return None, 401, is_external
+
+    if is_external:
+        if not require_auth:
+            return {"type": "anonymous", "skip_clarifier": True}, None, is_external
+        return None, 401, is_external
+
+    return detect_internal_caller(headers), None, is_external
 
 
 # ---------------------------------------------------------------------------
@@ -178,43 +269,28 @@ class AuthMiddleware:
 
         headers = dict(scope.get("headers", []))
         path: str = scope["path"]
+        is_external = self._is_external(headers)
 
-        # 1. Internal traffic
-        if not self._is_external(headers):
-            user = self._detect_internal_caller(headers)
-            await self._call_app(scope, receive, send, user)
-            return
-
-        # 2. External — enforce path allowlist
-        if not self._path_allowed(path):
+        # External requests still honor the public path allowlist before auth.
+        if is_external and not self._path_allowed(path):
             await self._send_json(send, 404, {"detail": "Not found"})
             return
 
-        # 3. Auth-exempt paths
-        if path in AUTH_EXEMPT_PATHS:
+        if is_external and path in AUTH_EXEMPT_PATHS:
             user = {"type": "anonymous", "skip_clarifier": True}
             await self._call_app(scope, receive, send, user)
             return
 
-        # 4. Auth disabled — allow as anonymous
-        if not self.require_auth:
-            user = {"type": "anonymous", "skip_clarifier": True}
-            await self._call_app(scope, receive, send, user)
-            return
-
-        # 5. Auth enabled — require a valid JWT Bearer token
-        token = self._extract_token(headers)
-        if not token:
-            await self._send_json(send, 401, {"detail": "Missing auth token"})
-            return
-
-        user = await self._validate_token(token)
+        user, error_status, _ = await resolve_request_user(
+            headers,
+            validators=self._validators,
+            require_auth=self.require_auth,
+            external_hostnames=self._external_hostnames,
+        )
         if user is None:
-            await self._send_json(send, 401, {"detail": "Invalid or expired auth token"})
+            detail = "Invalid or expired auth token" if self._extract_token(headers) else "Missing auth token"
+            await self._send_json(send, error_status or 401, {"detail": detail})
             return
-
-        if self._is_headless(headers):
-            user["skip_clarifier"] = True
 
         await self._call_app(scope, receive, send, user)
 
@@ -233,15 +309,11 @@ class AuthMiddleware:
             scope["state"] = {}
         scope["state"]["user"] = user
 
-        token = _current_user.set(user)
-        try:
+        with user_context(user):
             await self.app(scope, receive, send)
-        finally:
-            _current_user.reset(token)
 
     def _is_external(self, headers: dict[bytes, bytes]) -> bool:
-        host = headers.get(b"host", b"").decode().split(":")[0]
-        return host in self._external_hostnames
+        return is_external_request(headers, self._external_hostnames)
 
     def _path_allowed(self, path: str) -> bool:
         for allowed in EXTERNAL_ALLOWED_PATHS:
@@ -253,47 +325,17 @@ class AuthMiddleware:
         return False
 
     def _extract_token(self, headers: dict[bytes, bytes]) -> str | None:
-        auth = headers.get(b"authorization", b"").decode()
-        if auth.startswith("Bearer "):
-            return auth[7:]
-        # Fall back to idToken cookie (UI / browser callers)
-        cookie = headers.get(b"cookie", b"").decode()
-        for part in cookie.split(";"):
-            part = part.strip()
-            if part.startswith("idToken="):
-                return part[8:]
-        return None
+        return extract_auth_token(headers)
 
     def _is_headless(self, headers: dict[bytes, bytes]) -> bool:
-        return headers.get(b"x-aiq-mode", b"").decode().lower() == "headless"
+        return is_headless_request(headers)
 
     async def _validate_token(self, token: str) -> dict[str, Any] | None:
-        for validator in self._validators:
-            if validator.can_handle(token):
-                user = await validator.validate(token)
-                if user is not None:
-                    return user
-        logger.debug("Token rejected by all %d configured validator(s)", len(self._validators))
-        return None
+        return await validate_token_with_validators(token, self._validators)
 
     def _detect_internal_caller(self, headers: dict[bytes, bytes]) -> dict[str, Any]:
         """Classify an internal request without validating the token."""
-        auth = headers.get(b"authorization", b"").decode()
-        if auth.startswith("Bearer eyJ"):
-            token = auth[7:]
-            headless = self._is_headless(headers)
-            return {"type": "jwt", "token": token, "skip_clarifier": headless}
-
-        cookie = headers.get(b"cookie", b"").decode()
-        for part in cookie.split(";"):
-            part = part.strip()
-            if part.startswith("idToken="):
-                token = part[8:]
-                headless = self._is_headless(headers)
-                return {"type": "jwt", "token": token, "skip_clarifier": headless}
-
-        headless = self._is_headless(headers)
-        return {"type": "internal", "skip_clarifier": headless}
+        return detect_internal_caller(headers)
 
     @staticmethod
     async def _send_json(send: Send, status: int, body: dict) -> None:
