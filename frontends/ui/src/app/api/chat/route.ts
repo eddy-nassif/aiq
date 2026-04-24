@@ -14,6 +14,7 @@
 
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { ACCESS_CHANNEL_HEADER } from '@/adapters/auth/constants'
 import { isAuthRequired } from '@/adapters/auth/config'
 
 const getBackendUrl = (): string => {
@@ -48,6 +49,7 @@ export async function POST(req: Request): Promise<Response> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        [ACCESS_CHANNEL_HEADER]: 'ui',
         ...(authToken ? { Authorization: authToken } : {}),
         // Forward the idToken cookie to the backend
         ...(idToken ? { Cookie: `idToken=${idToken}` } : {}),

@@ -55,6 +55,36 @@ ENVIRONMENT VARIABLES
 ``AIQ_JWT_AUDIENCE``
     Optional ``aud`` claim to verify.  Leave unset to skip audience
     verification.
+
+``AIQ_TRACE_USER_IDENTITY_MODE``
+    Controls whether verified user identity is attached to active trace spans.
+    Supported values:
+    - ``none``: do not attach any user identity tags
+    - ``id``: attach pseudonymous stable identifiers only (``enduser.id``, ``aiq.user.id``,
+      ``aiq.auth.type``)
+    - ``full``: attach identifiers plus ``aiq.user.email`` and
+      ``aiq.user.name`` when present
+    Defaults to ``none``.
+
+``AIQ_TRACE_USER_IDENTITY_HMAC_SECRET``
+    Secret used to derive pseudonymous trace user IDs from verified subjects
+    when ``AIQ_TRACE_USER_IDENTITY_MODE`` is ``id`` or ``full``. If unset,
+    user identity tagging is disabled even when a mode is configured.
+
+``AIQ_TRACE_CLIENT_ID_MODE``
+    Controls whether a pseudonymous client identifier is attached to trace spans.
+    Supported values:
+    - ``none``: do not attach a client identifier
+    - ``ip``: derive a pseudonymous client ID from the request IP
+    Defaults to ``none``.
+
+``AIQ_TRACE_CLIENT_ID_HMAC_SECRET``
+    Secret used to derive pseudonymous client IDs. Falls back to
+    ``AIQ_TRACE_USER_IDENTITY_HMAC_SECRET`` when unset.
+
+``AIQ_TRACE_CLIENT_IP_HEADERS``
+    Comma-separated header names to check for the client IP before falling back
+    to the ASGI client address. Defaults to ``x-real-ip,x-forwarded-for``.
 """
 
 import json
@@ -69,7 +99,20 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from . import utils as auth_utils
+from .utils import _load_trace_client_id_mode
+from .utils import _load_trace_client_id_secret
+from .utils import _load_trace_client_ip_headers
+from .utils import _load_trace_user_identity_mode
+from .utils import _load_trace_user_identity_secret
+from .utils import attach_request_to_active_trace
+from .utils import is_headless_request
+
 logger = logging.getLogger(__name__)
+
+# Backwards-compatible aliases for tests and internal helper imports.
+_build_pseudonymous_trace_user_id = auth_utils._build_pseudonymous_trace_user_id
+_build_pseudonymous_trace_client_id = auth_utils._build_pseudonymous_trace_client_id
 
 # ---------------------------------------------------------------------------
 # ContextVar — carries the resolved caller identity through the call stack
@@ -134,11 +177,6 @@ def is_external_request(headers: dict[bytes, bytes], external_hostnames: set[str
     """Return ``True`` when the Host header matches an external-facing hostname."""
     host = headers.get(b"host", b"").decode().split(":")[0]
     return host in (external_hostnames or _load_external_hostnames())
-
-
-def is_headless_request(headers: dict[bytes, bytes]) -> bool:
-    """Return ``True`` for headless callers that should skip the clarifier."""
-    return headers.get(b"x-aiq-mode", b"").decode().lower() == "headless"
 
 
 def extract_auth_token(headers: dict[bytes, bytes]) -> str | None:
@@ -245,6 +283,11 @@ class AuthMiddleware:
         self.require_auth = require_auth
         self._validators: list = validators or []
         self._external_hostnames: set[str] = external_hostnames or _load_external_hostnames()
+        self._trace_user_identity_mode: str = _load_trace_user_identity_mode()
+        self._trace_user_identity_secret: str | None = _load_trace_user_identity_secret()
+        self._trace_client_id_mode: str = _load_trace_client_id_mode()
+        self._trace_client_id_secret: str | None = _load_trace_client_id_secret()
+        self._trace_client_ip_headers: list[str] = _load_trace_client_ip_headers()
 
         if require_auth and not self._validators:
             logger.warning(
@@ -256,6 +299,17 @@ class AuthMiddleware:
             require_auth,
             [type(v).__name__ for v in self._validators],
             self._external_hostnames,
+        )
+        logger.info(
+            "AuthMiddleware trace user identity mode=%s secret_configured=%s",
+            self._trace_user_identity_mode,
+            bool(self._trace_user_identity_secret),
+        )
+        logger.info(
+            "AuthMiddleware trace client id mode=%s secret_configured=%s ip_headers=%s",
+            self._trace_client_id_mode,
+            bool(self._trace_client_id_secret),
+            self._trace_client_ip_headers,
         )
 
     # ------------------------------------------------------------------
@@ -278,7 +332,7 @@ class AuthMiddleware:
 
         if is_external and path in AUTH_EXEMPT_PATHS:
             user = {"type": "anonymous", "skip_clarifier": True}
-            await self._call_app(scope, receive, send, user)
+            await self._call_app(scope, receive, send, headers, user)
             return
 
         user, error_status, _ = await resolve_request_user(
@@ -292,7 +346,7 @@ class AuthMiddleware:
             await self._send_json(send, error_status or 401, {"detail": detail})
             return
 
-        await self._call_app(scope, receive, send, user)
+        await self._call_app(scope, receive, send, headers, user)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -303,11 +357,25 @@ class AuthMiddleware:
         scope: Scope,
         receive: Receive,
         send: Send,
+        headers: dict[bytes, bytes],
         user: dict[str, Any],
     ) -> None:
         if "state" not in scope:
             scope["state"] = {}
         scope["state"]["user"] = user
+        is_external = self._is_external(headers)
+        trust_access_channel_override = (not is_external) or bool(user.get("sub"))
+        attach_request_to_active_trace(
+            headers,
+            scope,
+            user,
+            trust_access_channel_override=trust_access_channel_override,
+            user_identity_mode=self._trace_user_identity_mode,
+            user_identity_secret=self._trace_user_identity_secret,
+            client_id_mode=self._trace_client_id_mode,
+            client_id_secret=self._trace_client_id_secret,
+            client_ip_headers=self._trace_client_ip_headers,
+        )
 
         with user_context(user):
             await self.app(scope, receive, send)
