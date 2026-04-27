@@ -87,6 +87,7 @@ ENVIRONMENT VARIABLES
     to the ASGI client address. Defaults to ``x-real-ip,x-forwarded-for``.
 """
 
+import inspect
 import json
 import logging
 import os
@@ -225,15 +226,38 @@ def extract_auth_token(headers: dict[bytes, bytes]) -> str | None:
     return None
 
 
-async def validate_token_with_validators(token: str, validators: list) -> dict[str, Any] | None:
-    """Try validators in order and return the first successful identity dict."""
+async def validate_token_with_error(token: str, validators: list) -> tuple[dict[str, Any] | None, str | None]:
+    """Try validators in order and preserve the most specific auth failure code."""
+    last_error: str | None = "token_invalid"
     for validator in validators:
         if validator.can_handle(token):
-            user = await validator.validate(token)
+            has_error_validator = "validate_with_error" in getattr(validator, "__dict__", {}) or hasattr(
+                type(validator), "validate_with_error"
+            )
+            if has_error_validator:
+                result = validator.validate_with_error(token)
+                if inspect.isawaitable(result):
+                    user, error_code = await result
+                else:
+                    user, error_code = result
+            else:
+                result = await validator.validate(token)
+                if isinstance(result, tuple) and len(result) == 2:
+                    user, error_code = result
+                else:
+                    user, error_code = result, None if result is not None else "token_invalid"
             if user is not None:
-                return user
+                return (user, None)
+            if error_code:
+                last_error = error_code
     logger.debug("Token rejected by all %d configured validator(s)", len(validators))
-    return None
+    return (None, last_error)
+
+
+async def validate_token_with_validators(token: str, validators: list) -> dict[str, Any] | None:
+    """Try validators in order and return the first successful identity dict."""
+    user, _ = await validate_token_with_error(token, validators)
+    return user
 
 
 def detect_internal_caller(headers: dict[bytes, bytes]) -> dict[str, Any]:
@@ -251,33 +275,34 @@ async def resolve_request_user(
     validators: list,
     require_auth: bool,
     external_hostnames: set[str] | None = None,
-) -> tuple[dict[str, Any] | None, int | None, bool]:
+) -> tuple[dict[str, Any] | None, int | None, bool, str | None]:
     """Resolve request identity from validated credentials when present.
 
     Returns a tuple of:
       - resolved user dict, or None when the request should be rejected
       - HTTP status code to use on rejection, or None on success
       - whether the request was classified as external
+      - machine-readable auth error code, or None on success
     """
     is_external = is_external_request(headers, external_hostnames)
     token = extract_auth_token(headers)
 
     if token:
-        user = await validate_token_with_validators(token, validators)
+        user, error_code = await validate_token_with_error(token, validators)
         if user is not None:
             if is_headless_request(headers):
                 user["skip_clarifier"] = True
-            return user, None, is_external
+            return user, None, is_external, None
 
         if is_external and require_auth:
-            return None, 401, is_external
+            return None, 401, is_external, error_code or "token_invalid"
 
     if is_external:
         if not require_auth:
-            return {"type": "anonymous", "skip_clarifier": True}, None, is_external
-        return None, 401, is_external
+            return {"type": "anonymous", "skip_clarifier": True}, None, is_external, None
+        return None, 401, is_external, "token_missing"
 
-    return detect_internal_caller(headers), None, is_external
+    return detect_internal_caller(headers), None, is_external, None
 
 
 # ---------------------------------------------------------------------------
@@ -368,15 +393,19 @@ class AuthMiddleware:
             await self._call_app(scope, receive, send, headers, user)
             return
 
-        user, error_status, _ = await resolve_request_user(
+        user, error_status, _, error_code = await resolve_request_user(
             headers,
             validators=self._validators,
             require_auth=self.require_auth,
             external_hostnames=self._external_hostnames,
         )
         if user is None:
-            detail = "Invalid or expired auth token" if self._extract_token(headers) else "Missing auth token"
-            await self._send_json(send, error_status or 401, {"detail": detail})
+            detail = {
+                "token_missing": "Missing auth token",
+                "token_expired": "Token has expired",
+                "token_invalid": "Invalid auth token",
+            }.get(error_code or "", "Authentication failed")
+            await self._send_json(send, error_status or 401, {"detail": detail, "error": error_code or "token_invalid"})
             return
 
         await self._call_app(scope, receive, send, headers, user)
@@ -431,8 +460,9 @@ class AuthMiddleware:
     def _is_headless(self, headers: dict[bytes, bytes]) -> bool:
         return is_headless_request(headers)
 
-    async def _validate_token(self, token: str) -> dict[str, Any] | None:
-        return await validate_token_with_validators(token, self._validators)
+    async def _validate_token(self, token: str) -> tuple[dict[str, Any] | None, str | None]:
+        """Try each validator in order, returning ``(user, None)`` or ``(None, error_code)``."""
+        return await validate_token_with_error(token, self._validators)
 
     def _detect_internal_caller(self, headers: dict[bytes, bytes]) -> dict[str, Any]:
         """Classify an internal request without validating the token."""

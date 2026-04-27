@@ -9,6 +9,7 @@
  * and error message types for full HITL (human-in-the-loop) support.
  */
 
+import { trackRumError } from '@/shared/utils/rum'
 import { getWebSocketUrl } from './config'
 import {
   // NAT protocol types
@@ -289,6 +290,12 @@ export class NATWebSocketClient {
         }
 
         case NATMessageType.ERROR: {
+          if (message.content?.message === 'auth_error') {
+            trackRumError('WebSocket auth failure', {
+              auth_error_code: 'ws_auth_error',
+              details: message.content?.details,
+            })
+          }
           this.options.callbacks.onError?.(message.content)
           break
         }

@@ -9,6 +9,7 @@
  */
 
 import { getSession } from 'next-auth/react'
+import { trackRumError } from '@/shared/utils/rum'
 
 export interface AuthenticatedFetchOptions extends RequestInit {
   /** Skip authentication header (for public endpoints) */
@@ -66,11 +67,24 @@ export const authenticatedFetch = async (
   }
 
   // Return fetch with auth headers and credentials
-  return fetch(url, {
+  const response = await fetch(url, {
     ...fetchOptions,
     headers,
     credentials: fetchOptions.credentials || 'include', // Important for CORS
   })
+
+  // Emit auth error for observability (Datadog RUM or any APM).
+  if (response.status === 401) {
+    try {
+      const body = await response.clone().json()
+      const errorCode = body?.error || 'unknown'
+      trackRumError(`Auth failure: ${errorCode}`, { auth_error_code: errorCode, path: url })
+    } catch {
+      // Response may not be JSON (e.g. HTML error page) — skip silently
+    }
+  }
+
+  return response
 }
 
 /**

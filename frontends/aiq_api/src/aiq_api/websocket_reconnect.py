@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
+from aiq_api.auth.errors import AuthError
 from aiq_api.auth.middleware import build_request_trace_tags
 from aiq_api.auth.middleware import detect_internal_caller
 from aiq_api.auth.middleware import resolve_request_user
@@ -78,7 +79,7 @@ def configure_websocket_auth(
 async def authenticate_websocket_connection(socket: WebSocket) -> tuple[dict[str, Any] | None, int | None]:
     """Resolve the caller identity for a WebSocket handshake."""
     headers = dict(socket.scope.get("headers", []))
-    user, error_status, is_external = await resolve_request_user(
+    user, error_status, is_external, _ = await resolve_request_user(
         headers,
         validators=_auth_validators,
         require_auth=_require_auth,
@@ -408,7 +409,8 @@ class ReconnectableWebSocketMessageHandler(WebSocketMessageHandler):
         output_type: type | None = None,
     ) -> None:
         """Run the workflow without breaking reconnect message delivery."""
-        current_user = self._authenticated_user or detect_internal_caller(dict(self._socket.scope.get("headers", [])))
+        socket_scope = getattr(getattr(self, "_socket", None), "scope", {})
+        current_user = self._authenticated_user or detect_internal_caller(dict(socket_scope.get("headers", [])))
         with user_context(current_user):
             try:
                 auth_callback = self._flow_handler.authenticate if self._flow_handler else None
@@ -448,8 +450,24 @@ class ReconnectableWebSocketMessageHandler(WebSocketMessageHandler):
                         message_type=WebSocketMessageType.OBSERVABILITY_TRACE_MESSAGE,
                     )
                     self._pending_observability_trace = None
-            except Exception:
-                logger.exception("Error running workflow")
+            except Exception as exc:
+                if not isinstance(exc, AuthError):
+                    logger.exception("Error running workflow")
+                    return
+
+                logger.warning("Auth error during workflow: %s", exc)
+                try:
+                    await self.create_websocket_message(
+                        data_model=Error(
+                            code=ErrorTypes.UNKNOWN_ERROR,
+                            message=exc.error_code,
+                            details=str(exc),
+                        ),
+                        message_type=WebSocketMessageType.ERROR_MESSAGE,
+                        status=WebSocketMessageStatus.COMPLETE,
+                    )
+                except Exception:  # pragma: no cover - socket may already be closed
+                    pass
 
 
 def install_reconnectable_handler() -> None:  # TODO: upstream to NAT
