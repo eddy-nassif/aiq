@@ -31,7 +31,6 @@ TRACE_CLIENT_ID_MODES = frozenset({"none", "ip"})
 TRACE_ACCESS_CHANNELS = frozenset(
     {
         "ui",
-        "skill",
         "api",
         "headless",
         "anonymous",
@@ -319,6 +318,32 @@ def _tag_current_otel_span(tags: dict[str, str]) -> None:
             logger.debug("Failed to set OpenTelemetry span attribute %s", key, exc_info=True)
 
 
+def build_request_trace_tags(
+    headers: dict[bytes, bytes],
+    scope: Scope,
+    user: dict[str, Any],
+    *,
+    trust_access_channel_override: bool,
+    user_identity_mode: str,
+    user_identity_secret: str | None,
+    client_id_mode: str,
+    client_id_secret: str | None,
+    client_ip_headers: list[str],
+) -> dict[str, str]:
+    """Build request classification and optional pseudonymous identity trace tags."""
+    tags = _build_common_trace_tags(
+        headers,
+        scope,
+        user,
+        trust_access_channel_override=trust_access_channel_override,
+        client_id_mode=client_id_mode,
+        client_id_secret=client_id_secret,
+        client_ip_headers=client_ip_headers,
+    )
+    tags.update(_build_trace_user_tags(user, user_identity_mode, user_identity_secret))
+    return tags
+
+
 def attach_request_to_active_trace(
     headers: dict[bytes, bytes],
     scope: Scope,
@@ -330,18 +355,20 @@ def attach_request_to_active_trace(
     client_id_mode: str,
     client_id_secret: str | None,
     client_ip_headers: list[str],
-) -> None:
+) -> dict[str, str]:
     """Attach request classification and optional pseudonymous identity to active trace spans."""
-    tags = _build_common_trace_tags(
+    tags = build_request_trace_tags(
         headers,
         scope,
         user,
         trust_access_channel_override=trust_access_channel_override,
+        user_identity_mode=user_identity_mode,
+        user_identity_secret=user_identity_secret,
         client_id_mode=client_id_mode,
         client_id_secret=client_id_secret,
         client_ip_headers=client_ip_headers,
     )
-    tags.update(_build_trace_user_tags(user, user_identity_mode, user_identity_secret))
 
     _tag_current_ddtrace_span(tags)
     _tag_current_otel_span(tags)
+    return tags

@@ -206,23 +206,25 @@ general:
 | `redaction_headers` | Request headers checked to determine whether to redact. |
 | `resource_attributes` | Custom OTEL resource attributes attached to all spans. |
 
-### Request Classification Tags
+### Request Tags on NAT Spans
 
-When the `aiq_api` auth middleware is enabled, request spans can include a set
-of low-risk request tags plus optional pseudonymous identity tags.
+When the `aiq_api` auth middleware is enabled, NAT-exported workflow spans can
+include low-cardinality request tags plus optional pseudonymous identity tags.
+These tags are propagated across HTTP requests, WebSocket workflows, and async
+job execution.
 
-Always-on request tags:
+Always-on NAT span tags:
 
-- `aiq.caller.type` -- resolved caller type from auth middleware
-- `aiq.auth.transport` -- `bearer`, `cookie`, or `none`
-- `aiq.auth.verified` -- whether the request resolved to a verified principal
-- `aiq.access.channel` -- inferred request channel or the explicit `X-AIQ-Access-Channel` header
+- `nat.aiq.caller.type` -- resolved caller type from auth middleware
+- `nat.aiq.auth.transport` -- `bearer`, `cookie`, or `none`
+- `nat.aiq.auth.verified` -- whether the request resolved to a verified principal
+- `nat.aiq.access.channel` -- inferred request channel or trusted explicit access-channel header
 
 Optional pseudonymous tags:
 
-- `enduser.id`, `aiq.user.id`, `aiq.auth.type` -- controlled by `AIQ_TRACE_USER_IDENTITY_MODE`
-- `aiq.user.email`, `aiq.user.name` -- added only in `full` mode
-- `aiq.client.id` -- controlled by `AIQ_TRACE_CLIENT_ID_MODE=ip`
+- `nat.enduser.id`, `nat.aiq.user.id`, `nat.aiq.auth.type` -- controlled by `AIQ_TRACE_USER_IDENTITY_MODE`
+- `nat.aiq.user.email`, `nat.aiq.user.name` -- added only in `full` mode
+- `nat.aiq.client.id` -- controlled by `AIQ_TRACE_CLIENT_ID_MODE=ip`
 
 Environment variables:
 
@@ -234,23 +236,6 @@ Environment variables:
 
 The `id` and `ip` modes emit HMAC-derived pseudonymous identifiers rather than
 raw subjects or raw IP addresses.
-
-### Access Channel Header
-
-Deployment-specific wrappers can set the optional request header
-`X-AIQ-Access-Channel` to separate traffic sources without modifying public
-middleware. Supported values are:
-
-- `ui`
-- `skill`
-- `api`
-- `headless`
-- `anonymous`
-- `internal`
-- `unknown`
-
-When absent, the middleware falls back to generic inference from auth transport
-and request shape.
 
 ### Batch Configuration
 
