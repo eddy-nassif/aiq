@@ -39,6 +39,7 @@ Overview <./architecture/index.md>
 Architecture <./architecture/overview.md>
 Agents <./architecture/agents/index.md>
 Data Flow <./architecture/data-flow.md>
+Deep Research Sandbox <./architecture/agents/sandbox.md>
 ```
 
 ```{toctree}
@@ -137,4 +138,5 @@ FAQ <./resources/faq.md>
 ./examples/full-pipeline-web.md
 ./examples/cli-with-local-nims.md
 ./examples/hybrid-frontier-model.md
+./examples/skills-sandbox/index.md
 ```
