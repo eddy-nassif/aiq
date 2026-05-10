@@ -612,7 +612,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           setStreaming(false)
           setLoading(false)
           clearPendingInteraction()
+          // UI is now in a failure state. Drop both buffers so a later
+          // recovery-driven `connected` cannot silently replay the
+          // pre-rotation payload behind the user's back.
           lastSentMessageRef.current = null
+          pendingOutgoingRef.current = null
           return
         }
 
@@ -637,7 +641,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
 
         // Clear any pending interaction on error
         clearPendingInteraction()
+        // Symmetric with CONNECTION_FAILED: any buffered outgoing payload
+        // (preflight rotation, auth_expired) is no longer something the
+        // user expects to be re-sent once we've shown them an error card.
         lastSentMessageRef.current = null
+        pendingOutgoingRef.current = null
       },
 
       onConnectionChange: (status, context?: ConnectionChangeContext) => {

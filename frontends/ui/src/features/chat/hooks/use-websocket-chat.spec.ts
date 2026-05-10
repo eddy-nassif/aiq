@@ -1298,6 +1298,59 @@ describe('useWebSocketChat -- token rotation', () => {
     )
   })
 
+  /**
+   * Regression: an `auth_expired` rotation that fails (CONNECTION_FAILED)
+   * must drop `pendingOutgoingRef`. Otherwise, when the connection later
+   * recovers via `useConnectionRecovery`, the stale buffered message would
+   * be silently re-sent at a point where the UI has already shown the user
+   * a failure state -- a "phantom resend" the user never asked for.
+   */
+  test('auth_expired -> CONNECTION_FAILED clears resend buffer (no phantom resend on recovery)', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    act(() => {
+      result.current.sendMessage('Original question')
+    })
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+    mockAddErrorCard.mockClear()
+
+    // Backend rejects with auth_expired -- buffer is populated and rotation kicks off.
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+
+    // Rotation cannot recover -- WS client exhausts retries and emits
+    // CONNECTION_FAILED. UI shows a failure card to the user.
+    mockCheckBackendHealthCached.mockResolvedValue(true)
+    await act(async () => {
+      await capturedCallbacks.onError?.({
+        code: 'CONNECTION_FAILED',
+        message: 'Unable to connect to the server.',
+      })
+    })
+    expect(mockAddErrorCard).toHaveBeenCalled()
+
+    mockWsClient.sendMessage.mockClear()
+
+    // Later, useConnectionRecovery polls health and the connection comes
+    // back. The 'connected' transition must NOT replay the original
+    // message: the user has already seen the failure and may have moved
+    // on. A silent resend at this point would be the bug.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
   test('non-auth_expired error still surfaces an error card and clears resend buffer', async () => {
     const { result } = await mountAndArmTimers()
     mockWsClient.isConnected.mockReturnValue(true)
