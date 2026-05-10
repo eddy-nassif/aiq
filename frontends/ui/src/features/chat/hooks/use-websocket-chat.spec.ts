@@ -1385,4 +1385,105 @@ describe('useWebSocketChat -- token rotation', () => {
     })
     expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
   })
+
+  /**
+   * Regression: the auth_expired guard must require BOTH the documented
+   * backend fields (`code === 'user_auth_error'` and `message ===
+   * 'auth_expired'`). An unrelated agent/workflow error that happens to
+   * carry `message: 'auth_expired'` (e.g. user-facing text from a tool)
+   * must surface as an error card, not silently trigger a phantom
+   * reconnect that masks the real failure.
+   */
+  test('error with auth_expired message but non-auth code surfaces a banner (no silent reconnect)', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    act(() => {
+      result.current.sendMessage('Hello')
+    })
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+    mockAddErrorCard.mockClear()
+
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'workflow_error',
+        message: 'auth_expired',
+      })
+    })
+
+    // Must be treated as a generic application error: banner shown, NO
+    // rotation, NO drain on the next 'connected'.
+    expect(mockAddErrorCard).toHaveBeenCalled()
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Regression: a pre-flight rotation that drains the buffer must update
+   * `lastSentMessageRef`, so a follow-up `auth_expired` on the freshly
+   * rotated socket can re-buffer the same payload. Without this, the
+   * second auth_expired finds `lastSentMessageRef === null` and the
+   * user's message is silently dropped (no error card, no resend).
+   */
+  test('preflight rotation -> drain -> auth_expired chains the resend (no silent loss)', async () => {
+    const { result } = await mountAndArmTimers()
+
+    // Move past expiry so the preflight branch fires inside sendMessage.
+    vi.setSystemTime(EXP_AT_S * 1000 + 1)
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    act(() => {
+      result.current.sendMessage('Pre-flight payload')
+    })
+
+    // Pre-flight: buffered, rotation kicked off, NOT yet on the wire.
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+
+    // Fresh socket connects -> drain puts the buffered payload on the wire.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Pre-flight payload', expect.any(Array))
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+    mockAddErrorCard.mockClear()
+
+    // The fresh socket ALSO comes back with auth_expired (e.g. a NextAuth
+    // refresh race left two stale tokens in a row). The handler must be
+    // able to re-buffer the same payload via lastSentMessageRef -- which
+    // the drain block is responsible for populating.
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    // Critically: silent for the user. No banner.
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+
+    // Second drain must put the SAME payload back on the wire. If the
+    // drain block forgot to populate lastSentMessageRef, this assertion
+    // fails and the user's message is silently lost.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Pre-flight payload', expect.any(Array))
+  })
 })

@@ -588,7 +588,13 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         // fresh handshake completes. We deliberately do NOT touch
         // `isStreaming` or the thinking step so the user's "request in
         // progress" UX bridges the rotation seamlessly.
-        if (errorContent.message === 'auth_expired') {
+        //
+        // Match BOTH fields, not just `message`. A future application
+        // error that happens to carry `message: 'auth_expired'` (agent
+        // text, validation message) would otherwise be silently swallowed
+        // and trigger a phantom reconnect instead of surfacing as a
+        // banner.
+        if (errorContent.code === 'user_auth_error' && errorContent.message === 'auth_expired') {
           const lastSent = lastSentMessageRef.current
           if (lastSent) {
             pendingOutgoingRef.current = lastSent
@@ -662,6 +668,13 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           if (pending) {
             pendingOutgoingRef.current = null
             wsClientRef.current?.sendMessage(pending.content, pending.dataSources)
+            // Mirror doSend(): the drain just put a payload on the wire,
+            // so it is now the canonical "last sent message". Without
+            // this, a pre-flight rotation that gets immediately hit by a
+            // second `auth_expired` on the fresh socket would have a null
+            // `lastSentMessageRef` and silently drop the user's message
+            // (the auth_expired handler couldn't re-buffer it).
+            lastSentMessageRef.current = pending
             setLoading(false)
           }
           return
