@@ -59,6 +59,17 @@ export interface NATWebSocketClientOptions {
   reconnectDelay?: number
   /** Override WebSocket URL (uses same-origin by default, proxied through UI server) */
   websocketUrl?: string
+  /**
+   * Hook invoked before opening a new WebSocket (initial or reconnect).
+   *
+   * Used to refresh auth credentials so the upgrade request carries an up-to-date
+   * httpOnly idToken cookie. The WebSocket handshake is the only point where the
+   * backend (re)reads auth, so a stale cookie can leave a long-lived connection
+   * authenticated by an expired token.
+   *
+   * Errors are swallowed -- the connect attempt proceeds regardless.
+   */
+  onBeforeReconnect?: () => Promise<void>
 }
 
 /**
@@ -104,6 +115,15 @@ export class NATWebSocketClient {
     this.options.callbacks.onConnectionChange?.('connecting')
 
     try {
+      if (this.options.onBeforeReconnect) {
+        try {
+          await this.options.onBeforeReconnect()
+        } catch (err) {
+          // Auth refresh is best-effort; the upgrade still happens with whatever
+          // cookie the browser has. The backend will close the socket if it's bad.
+          console.warn('[WS] onBeforeReconnect failed, proceeding with current auth', err)
+        }
+      }
       const wsUrl = this.options.websocketUrl || (await getWebSocketUrl())
       this.ws = new WebSocket(wsUrl)
       this.setupEventHandlers()
@@ -291,8 +311,15 @@ export class NATWebSocketClient {
 
         case NATMessageType.ERROR: {
           // Auth errors carry the specific error_code in `message`
-          // (e.g. "token_expired", "token_invalid", "auth_error").
-          const authCodes = new Set(['auth_error', 'token_expired', 'token_invalid'])
+          // (e.g. "token_expired", "token_invalid", "auth_error",
+          // "auth_expired"). `auth_expired` is the per-message re-auth
+          // gate -- the hook turns it into a silent reconnect + auto-resend.
+          const authCodes = new Set([
+            'auth_error',
+            'token_expired',
+            'token_invalid',
+            'auth_expired',
+          ])
           const errorMsg = message.content?.message
           if (errorMsg && authCodes.has(errorMsg)) {
             trackAuthEvent(errorMsg, {

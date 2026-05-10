@@ -21,6 +21,7 @@
 
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import { getSession } from 'next-auth/react'
 import {
   NATWebSocketClient,
   createNATWebSocketClient,
@@ -58,6 +59,20 @@ import {
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 const EMPTY_CONVERSATIONS: Conversation[] = []
+
+/**
+ * Seconds before token expiry to proactively rotate the WebSocket. The
+ * backend only validates the JWT at the WS upgrade, so an open socket
+ * keeps trusting an expired token until we close + reopen it.
+ *
+ * If the timer fires mid-stream, rotation is deferred until `isStreaming`
+ * returns to false so long-running responses are never cut short.
+ *
+ * INVARIANT: must be smaller than the server's `TOKEN_REFRESH_BUFFER_SECONDS`
+ * (default 15min) so NextAuth has already rotated the JWT by the time we
+ * upgrade with a fresh cookie.
+ */
+const WS_REFRESH_SOFT_GUARD_SECONDS = 60
 
 /**
  * Map NAT/backend error codes to frontend ErrorCode for consistent UI display.
@@ -158,7 +173,72 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
   // Ref to track the current status for detecting status changes
   const currentStatusRef = useRef<StatusType | null>(null)
 
+  /**
+   * Single-slot buffer for an outgoing message deferred by a socket
+   * rotation (stale token pre-flight or `auth_expired` from backend).
+   * Drained inside `onConnectionChange('connected')`. Single-slot is
+   * sufficient because `setStreaming(true)` gates new sends during rotation.
+   */
+  const pendingOutgoingRef = useRef<{ content: string; dataSources: string[] } | null>(null)
+
+  /**
+   * Last message written to the socket, kept until the workflow completes
+   * or hits a non-auth error. Lets us auto-resend on `auth_expired` without
+   * losing the user's payload. Distinct from `pendingOutgoingRef` so a
+   * routine soft rotation doesn't replay an already-completed message.
+   */
+  const lastSentMessageRef = useRef<{ content: string; dataSources: string[] } | null>(null)
+
+  /**
+   * Set by the soft timer when it fires while streaming; consumed by the
+   * deferred-rotation effect once `isStreaming` returns to false. Ref (not
+   * state) so flipping the flag doesn't re-run the timer effect.
+   */
+  const pendingRotationRef = useRef(false)
+
+  /**
+   * Single rotation primitive. `connect()` runs `onBeforeReconnect`, which
+   * is the only call site for `getSession()` -- routing all refreshes
+   * through one path avoids racing the SessionProvider polling (which
+   * would cause `invalid_grant` with rotating refresh tokens).
+   */
+  const rotateSocket = useCallback((reason: string): void => {
+    const client = wsClientRef.current
+    if (!client) return
+    console.warn(`[WS] Rotating connection before token expiry (${reason})`)
+    client.disconnect()
+    void client.connect()
+  }, [])
+
   const { user, authRequired, error: authError } = useAuth()
+
+  /**
+   * Token expiry (seconds since epoch) that authenticates the *current*
+   * socket. Captured from the `getSession()` call that primes the cookie
+   * for the upcoming upgrade. Intentionally decoupled from the live
+   * `useAuth().idTokenExpiresAt`: SessionProvider polling advances the
+   * live value but does NOT re-authenticate an already-open socket, so
+   * binding the timer to it would let polling clear it before it fires.
+   */
+  const [activeSocketTokenExpiresAt, setActiveSocketTokenExpiresAt] =
+    useState<number | undefined>(undefined)
+
+  /**
+   * Refresh the NextAuth session before opening a new WebSocket so the
+   * upgrade request carries an up-to-date idToken cookie, and anchor the
+   * rotation deadline to the expiry returned by that same call.
+   */
+  const refreshAuthBeforeReconnect = useCallback(async (): Promise<void> => {
+    if (!authRequired) return
+    try {
+      const session = await getSession()
+      if (session?.idTokenExpiresAt) {
+        setActiveSocketTokenExpiresAt(session.idTokenExpiresAt)
+      }
+    } catch (err) {
+      console.warn('[useWebSocketChat] getSession before WS reconnect failed', err)
+    }
+  }, [authRequired])
 
   // Chat store — reactive state only
   const {
@@ -286,8 +366,8 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           const currentPlanMessages = state.planMessages
           const currentConversation = state.currentConversation
 
-          // Extract research title from plan messages for conversation title
-          // Try multiple sources: plan preview, any plan message, or original user query
+          // Derive a conversation title from the plan (preferred) or fall
+          // back to the last user message.
           if (currentConversation) {
             let extractedTitle: string | null = null
 
@@ -322,7 +402,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             if (!extractedTitle) {
               const userMessages = currentConversation.messages.filter((m) => m.role === 'user')
               const lastUserMsg = userMessages[userMessages.length - 1]
-              // Use the last user message if it's not a simple greeting
+              // Skip simple greetings.
               if (lastUserMsg && lastUserMsg.content.length > 10) {
                 extractedTitle = lastUserMsg.content
               }
@@ -331,8 +411,8 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             if (extractedTitle) {
               // Clean up the title
               const cleanTitle = extractedTitle
-                .replace(/^\*+|\*+$/g, '') // Remove asterisks
-                .replace(/^["']|["']$/g, '') // Remove quotes
+                .replace(/^\*+|\*+$/g, '')
+                .replace(/^["']|["']$/g, '')
                 .trim()
 
               // Truncate to reasonable length
@@ -349,10 +429,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           // Add 'starting' banner as a persistent message
           addDeepResearchBanner('starting', jobId)
 
-          // Create tracking message with empty content (won't render due to content guard)
-          // This message carries job metadata for session restoration
+          // Empty-content tracking message carries job metadata for session
+          // restoration; AgentResponse returns null for empty content so it
+          // won't render.
           const messageId = addAgentResponseWithMeta(
-            '', // Empty content - AgentResponse returns null for empty content
+            '',
             false,
             {
               deepResearchJobId: jobId,
@@ -363,13 +444,15 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           )
           // Start deep research SSE streaming bound to this message
           startDeepResearch(jobId, messageId)
-          // Keep isStreaming=true to block input - deep research will release it on completion
+          // Keep isStreaming=true to block input -- deep research SSE will
+          // release it on completion.
           setLoading(false)
           // Don't add this as final response - let SSE handle the rest
           return
         }
 
-        // Any system_response_message with text content should be added as AgentResponse immediately
+        // reportContent is only populated by deep research SSE events
+        // (use-deep-research.ts), not by regular WebSocket responses.
         if (content && content.trim()) {
           // Add to chat area as AgentResponse
           // Note: reportContent is only set by deep research SSE events (use-deep-research.ts)
@@ -391,20 +474,23 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
 
           // Clear any pending interaction (HITL prompt) on completion
           clearPendingInteraction()
+
+          // Workflow finished cleanly -- drop the resend buffer.
+          lastSentMessageRef.current = null
         }
       },
 
       onIntermediateStep: (content: NATIntermediateStepContent | string, status: string, _parentId?: string) => {
-        // NAT uses an internal step ID (not the user message ID) for intermediate step parent_id,
-        // so we cannot use parent_id for stale detection here. Guard instead on isStreaming:
-        // if we are not currently streaming, the workflow that sent this step was already
-        // cancelled/disconnected, so discard it.
+        // NAT uses an internal step ID (not the user message ID) for
+        // parent_id on intermediate steps, so we can't stale-detect via
+        // parent_id. Guard on isStreaming instead: if not streaming, the
+        // workflow was already cancelled/disconnected.
         const { isStreaming: currentlyStreaming } = useChatStore.getState()
         if (!currentlyStreaming) {
           console.warn('Ignoring stale intermediate step -- not currently streaming')
           return
         }
-        // Handle string content (legacy format)
+        // Legacy string-content path: synthesize a generic thinking step.
         if (typeof content === 'string') {
           // For plain string content, create a generic thinking step
           if (content && content.trim()) {
@@ -438,7 +524,8 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           // Update existing step with complete status and final content
           updateThinkingStepByFunctionName(functionName, formattedPayload, true)
         } else if (existingStep) {
-          // Append to existing step (shouldn't happen often, but handle gracefully)
+          // Defensive: shouldn't usually fire (a step is normally either new
+          // or transitioning to complete), but handle gracefully.
           appendToThinkingStep(existingStep.id, '\n' + formattedPayload)
         } else {
           // Create new step for this function (or model/tool sub-call)
@@ -474,7 +561,9 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         }
         setPendingInteraction(interaction)
 
-        // Add to PlanTab FIRST so it's captured when saving prompt message
+        // Add to PlanTab FIRST so it's captured when the prompt message is
+        // saved (addAgentPrompt below snapshots planMessages for session
+        // restoration).
         addPlanMessage({
           text: prompt.text,
           inputType: prompt.input_type as 'text' | 'multiple_choice' | 'binary_choice' | 'approval' | 'notification',
@@ -491,7 +580,26 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       },
 
       onError: async (errorContent: NATErrorContent) => {
-        // Connection errors (all retries exhausted) -- gate with health check
+        // Auth expired mid-workflow: backend contract is `code ===
+        // 'user_auth_error'` + `message === 'auth_expired'` (see
+        // websocket_reconnect.py `_send_auth_expired_error`). Buffer the
+        // just-sent payload, rotate the socket, and let
+        // `onConnectionChange('connected')` re-issue the message once the
+        // fresh handshake completes. We deliberately do NOT touch
+        // `isStreaming` or the thinking step so the user's "request in
+        // progress" UX bridges the rotation seamlessly.
+        if (errorContent.message === 'auth_expired') {
+          const lastSent = lastSentMessageRef.current
+          if (lastSent) {
+            pendingOutgoingRef.current = lastSent
+          }
+          rotateSocket('auth_expired')
+          return
+        }
+
+        // Connection failure (all client retries exhausted) -- gate the UI
+        // on a health check so we can distinguish "backend down" from a
+        // likely auth/cookie drift.
         if (errorContent.code === 'CONNECTION_FAILED') {
           const backendUp = await checkBackendHealthCached()
 
@@ -504,11 +612,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           setStreaming(false)
           setLoading(false)
           clearPendingInteraction()
+          lastSentMessageRef.current = null
           return
         }
 
-        // Application-level errors from the backend (agent errors, etc.)
-        // Complete any pending thinking step on error
+        // Application-level errors from the backend (agent errors, etc.).
         if (currentThinkingStepIdRef.current) {
           completeThinkingStep(currentThinkingStepIdRef.current)
           currentThinkingStepIdRef.current = null
@@ -529,6 +637,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
 
         // Clear any pending interaction on error
         clearPendingInteraction()
+        lastSentMessageRef.current = null
       },
 
       onConnectionChange: (status, context?: ConnectionChangeContext) => {
@@ -537,19 +646,27 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         if (status === 'connected') {
           invalidateHealthCache()
           dismissConnectionErrors()
+
+          // Drain any message buffered by a pre-flight rotation or
+          // `auth_expired`. Keeps the UX silent: the user typed once and
+          // it goes out the moment the fresh socket is up.
+          const pending = pendingOutgoingRef.current
+          if (pending) {
+            pendingOutgoingRef.current = null
+            wsClientRef.current?.sendMessage(pending.content, pending.dataSources)
+            setLoading(false)
+          }
           return
         }
 
-        // Intentional disconnects (session switch, cleanup): no error UI
+        // Intentional disconnects (session switch, cleanup) shouldn't
+        // surface as errors.
         if (context?.intentional) return
 
         if (status === 'error' || status === 'disconnected') {
-          // Don't show error cards here. The WebSocket client suppresses
-          // intermediate statuses during reconnection, and fires onError
-          // with CONNECTION_FAILED only after all retries are exhausted.
-          // At that point the health-check gate decides whether to show UI.
-
-          // Complete any in-progress thinking step so the UI doesn't hang
+          // Don't show error cards here -- the WS client only fires
+          // onError(CONNECTION_FAILED) after all retries are exhausted,
+          // and the health-check gate there decides whether to show UI.
           if (currentThinkingStepIdRef.current) {
             completeThinkingStep(currentThinkingStepIdRef.current)
             currentThinkingStepIdRef.current = null
@@ -584,6 +701,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     addPlanMessage,
     updateConversationTitle,
     getTransportFailure,
+    rotateSocket,
   ])
 
   /**
@@ -597,6 +715,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       wsClientRef.current = createNATWebSocketClient({
         conversationId: currentConversation.id,
         callbacks: createCallbacks(),
+        onBeforeReconnect: refreshAuthBeforeReconnect,
       })
       wsClientRef.current.connect()
     } else {
@@ -611,7 +730,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         wsClientRef.current = null
       }
     }
-  }, [currentConversation?.id, autoConnect, createCallbacks])
+  }, [currentConversation?.id, autoConnect, createCallbacks, refreshAuthBeforeReconnect])
 
   /**
    * Send a message via WebSocket
@@ -652,12 +771,12 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         messageFiles,
       })
 
-      // Get the conversation ID from store (may have been created by addUserMessage)
+      // currentConversation may have just been created inside addUserMessage.
       const storeState = useChatStore.getState()
       const conversationId = storeState.currentConversation?.id
 
-      // Clear report content and pending interaction for new request
-      // Note: We do NOT clear thinkingSteps - they persist per userMessageId for chat history
+      // thinkingSteps are NOT cleared here -- they persist per userMessageId
+      // so chat history still renders prior thinking blocks.
       clearReportContent()
       clearPendingInteraction()
 
@@ -674,6 +793,10 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       const doSend = () => {
         if (wsClientRef.current?.isConnected()) {
           wsClientRef.current.sendMessage(content, dataSourcesForMessage)
+          // Remember the payload so a mid-workflow `auth_expired` can
+          // transparently re-issue it after the reconnect. Cleared on
+          // isFinal or any non-auth error.
+          lastSentMessageRef.current = { content, dataSources: dataSourcesForMessage }
           setLoading(false)
         } else {
           addErrorCard('connection.failed', 'WebSocket connection failed')
@@ -682,12 +805,26 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         }
       }
 
-      // If WebSocket client exists and is connected, send immediately
+      // Pre-flight: the socket may report connected, but if its JWT is
+      // already past `exp` (e.g. after a long idle / laptop sleep) the
+      // backend is still trusting a dead token. Buffer + rotate; the
+      // buffer is drained from `onConnectionChange('connected')`.
+      const tokenIsStale = (): boolean => {
+        if (!authRequired || !activeSocketTokenExpiresAt) return false
+        return Date.now() >= activeSocketTokenExpiresAt * 1000
+      }
+
+      if (wsClientRef.current?.isConnected() && tokenIsStale()) {
+        pendingOutgoingRef.current = { content, dataSources: dataSourcesForMessage }
+        rotateSocket('preflight')
+        return
+      }
+
       if (wsClientRef.current?.isConnected()) {
         doSend()
       } else if (conversationId) {
-        // WebSocket not ready but we have a conversation - initialize synchronously
-        // Create callbacks that include the send-on-connect logic
+        // No client yet: initialize synchronously and chain doSend to the
+        // 'connected' transition so the message goes out on first handshake.
         const callbacks = createCallbacks()
         const originalOnConnectionChange = callbacks.onConnectionChange
         callbacks.onConnectionChange = (status, ctx) => {
@@ -701,10 +838,12 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         wsClientRef.current = createNATWebSocketClient({
           conversationId,
           callbacks,
+          onBeforeReconnect: refreshAuthBeforeReconnect,
         })
         wsClientRef.current.connect()
       } else {
-        // No conversation ID - shouldn't happen but handle gracefully
+        // Defensive: shouldn't happen because addUserMessage creates a
+        // conversation if one is missing.
         addErrorCard('system.unknown', 'No active conversation')
         setStreaming(false)
         setLoading(false)
@@ -720,6 +859,10 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       setStreaming,
       setLoading,
       createCallbacks,
+      refreshAuthBeforeReconnect,
+      rotateSocket,
+      authRequired,
+      activeSocketTokenExpiresAt,
     ]
   )
 
@@ -733,8 +876,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         return
       }
 
-      // Update prompt in store
-      // Find the last prompt message and mark it as responded
+      // Mark the most recent unanswered prompt message as responded.
       const messages = currentConversation?.messages ?? []
       const lastPrompt = [...messages]
         .reverse()
@@ -787,17 +929,65 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       wsClientRef.current = createNATWebSocketClient({
         conversationId: currentConversation.id,
         callbacks: createCallbacks(),
+        onBeforeReconnect: refreshAuthBeforeReconnect,
       })
       wsClientRef.current.connect()
     }
-  }, [currentConversation, createCallbacks])
+  }, [currentConversation, createCallbacks, refreshAuthBeforeReconnect])
 
   // Activate recovery polling when connection error cards are visible
   useConnectionRecovery(connect)
 
   /**
-   * Disconnect from WebSocket
+   * Soft-rotation timer. If idle when it fires, rotate immediately; if a
+   * stream is in flight, set `pendingRotationRef` and let the deferred
+   * effect below rotate once the stream ends so we never cut a response.
    */
+  useEffect(() => {
+    if (!authRequired || !activeSocketTokenExpiresAt) return
+
+    let cancelled = false
+    let softTimer: ReturnType<typeof setTimeout> | undefined
+
+    const onSoftFire = (): void => {
+      if (cancelled) return
+      if (useChatStore.getState().isStreaming) {
+        pendingRotationRef.current = true
+        return
+      }
+      rotateSocket('soft')
+    }
+
+    const now = Date.now()
+    const expMs = activeSocketTokenExpiresAt * 1000
+    const softAt = expMs - WS_REFRESH_SOFT_GUARD_SECONDS * 1000
+
+    if (softAt > now) {
+      softTimer = setTimeout(onSoftFire, softAt - now)
+    } else {
+      // Already inside the soft window on first effect run (e.g. mount
+      // with a near-expiry token).
+      onSoftFire()
+    }
+
+    return () => {
+      cancelled = true
+      if (softTimer) clearTimeout(softTimer)
+    }
+  }, [activeSocketTokenExpiresAt, authRequired, rotateSocket])
+
+  /**
+   * Drains a deferred rotation the moment the stream ends. Cleared
+   * synchronously so a follow-up stream doesn't double-rotate before the
+   * next soft timer arms.
+   */
+  useEffect(() => {
+    if (!isStreaming && pendingRotationRef.current) {
+      pendingRotationRef.current = false
+      rotateSocket('deferred')
+    }
+  }, [isStreaming, rotateSocket])
+
   const disconnect = useCallback(() => {
     if (wsClientRef.current) {
       wsClientRef.current.disconnect()

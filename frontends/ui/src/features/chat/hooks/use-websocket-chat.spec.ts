@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { vi, describe, test, expect, beforeEach } from 'vitest'
+import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { useWebSocketChat } from './use-websocket-chat'
+import { useAuth } from '@/adapters/auth'
 
 // Mock store actions
 const mockAddUserMessage = vi.fn()
@@ -64,42 +65,54 @@ let mockStoreState: {
   planMessages: [],
 }
 
+/**
+ * Build the default selector-based useChatStore mock body.
+ *
+ * Extracted as a helper so suites that override useChatStore with their own
+ * mockImplementation (e.g. the deep-research escalation test) can restore
+ * the default in afterEach without duplicating the action wiring.
+ */
+const defaultUseChatStoreImpl = (selector?: (s: any) => any) => {
+  const state = {
+    ...mockStoreState,
+    addUserMessage: mockAddUserMessage,
+    addAgentResponse: mockAddAgentResponse,
+    addAgentResponseWithMeta: mockAddAgentResponseWithMeta,
+    addThinkingStep: mockAddThinkingStep,
+    appendToThinkingStep: mockAppendToThinkingStep,
+    completeThinkingStep: mockCompleteThinkingStep,
+    updateThinkingStepByFunctionName: mockUpdateThinkingStepByFunctionName,
+    findThinkingStepByFunctionName: mockFindThinkingStepByFunctionName,
+    setReportContent: mockSetReportContent,
+    addStatusCard: mockAddStatusCard,
+    addAgentPrompt: mockAddAgentPrompt,
+    addErrorCard: mockAddErrorCard,
+    setCurrentStatus: mockSetCurrentStatus,
+    setPendingInteraction: mockSetPendingInteraction,
+    clearPendingInteraction: mockClearPendingInteraction,
+    setLoading: mockSetLoading,
+    setStreaming: mockSetStreaming,
+    clearThinkingSteps: mockClearThinkingSteps,
+    clearReportContent: mockClearReportContent,
+    createConversation: mockCreateConversation,
+    setCurrentUser: mockSetCurrentUser,
+    getUserConversations: mockGetUserConversations,
+    selectConversation: mockSelectConversation,
+    respondToPrompt: mockRespondToPrompt,
+    addPlanMessage: mockAddPlanMessage,
+    updatePlanMessageResponse: mockUpdatePlanMessageResponse,
+    addDeepResearchBanner: mockAddDeepResearchBanner,
+    dismissConnectionErrors: mockDismissConnectionErrors,
+  }
+  return selector ? selector(state) : state
+}
+
 vi.mock('../store', () => ({
   useChatStore: Object.assign(
-    vi.fn((selector?: (s: any) => any) => {
-      const state = {
-        ...mockStoreState,
-        addUserMessage: mockAddUserMessage,
-        addAgentResponse: mockAddAgentResponse,
-        addAgentResponseWithMeta: mockAddAgentResponseWithMeta,
-        addThinkingStep: mockAddThinkingStep,
-        appendToThinkingStep: mockAppendToThinkingStep,
-        completeThinkingStep: mockCompleteThinkingStep,
-        updateThinkingStepByFunctionName: mockUpdateThinkingStepByFunctionName,
-        findThinkingStepByFunctionName: mockFindThinkingStepByFunctionName,
-        setReportContent: mockSetReportContent,
-        addStatusCard: mockAddStatusCard,
-        addAgentPrompt: mockAddAgentPrompt,
-        addErrorCard: mockAddErrorCard,
-        setCurrentStatus: mockSetCurrentStatus,
-        setPendingInteraction: mockSetPendingInteraction,
-        clearPendingInteraction: mockClearPendingInteraction,
-        setLoading: mockSetLoading,
-        setStreaming: mockSetStreaming,
-        clearThinkingSteps: mockClearThinkingSteps,
-        clearReportContent: mockClearReportContent,
-        createConversation: mockCreateConversation,
-        setCurrentUser: mockSetCurrentUser,
-        getUserConversations: mockGetUserConversations,
-        selectConversation: mockSelectConversation,
-        respondToPrompt: mockRespondToPrompt,
-        addPlanMessage: mockAddPlanMessage,
-        updatePlanMessageResponse: mockUpdatePlanMessageResponse,
-        addDeepResearchBanner: mockAddDeepResearchBanner,
-        dismissConnectionErrors: mockDismissConnectionErrors,
-      }
-      return selector ? selector(state) : state
-    }),
+    // Wrap in lambda so the reference to `defaultUseChatStoreImpl` is
+    // resolved at call time (not at vi.mock hoist time). Without the
+    // lambda, vi.fn would read the const eagerly and hit TDZ.
+    vi.fn((selector?: (s: any) => any) => defaultUseChatStoreImpl(selector)),
     {
       getState: vi.fn(() => ({
         ...mockStoreState,
@@ -109,12 +122,21 @@ vi.mock('../store', () => ({
   selectHasConnectionError: () => false,
 }))
 
-// Mock auth hook
+// Mock auth hook (per-test override via vi.mocked(useAuth).mockReturnValue(...))
 vi.mock('@/adapters/auth', () => ({
   useAuth: vi.fn(() => ({
     user: { id: 'user-1', email: 'test@example.com' },
     idToken: 'mock-id-token',
+    authRequired: false,
+    error: undefined,
   })),
+}))
+
+// Mock next-auth/react getSession so the token-rotation logic in
+// useWebSocketChat doesn't try to talk to a real /api/auth/session endpoint.
+const mockGetSession = vi.fn<() => Promise<{ idTokenExpiresAt?: number } | null>>()
+vi.mock('next-auth/react', () => ({
+  getSession: () => mockGetSession(),
 }))
 
 // Mock connection recovery hook (tested separately)
@@ -182,9 +204,17 @@ let capturedCallbacks: {
   onConnectionChange?: (status: string) => void
 } = {}
 
+// Captured separately so token-rotation tests can drive it directly without
+// depending on React state propagation timing.
+let capturedOnBeforeReconnect: (() => Promise<void>) | undefined
+
 vi.mock('@/adapters/api/websocket-client', () => ({
-  createNATWebSocketClient: vi.fn((options: { callbacks: typeof capturedCallbacks }) => {
+  createNATWebSocketClient: vi.fn((options: {
+    callbacks: typeof capturedCallbacks
+    onBeforeReconnect?: () => Promise<void>
+  }) => {
     capturedCallbacks = options.callbacks
+    capturedOnBeforeReconnect = options.onBeforeReconnect
     return mockWsClient
   }),
   NATWebSocketClient: vi.fn(),
@@ -210,6 +240,12 @@ describe('useWebSocketChat', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     capturedCallbacks = {}
+    capturedOnBeforeReconnect = undefined
+    mockGetSession.mockReset()
+    // Restore default useChatStore mock so a previous test's
+    // mockImplementation override (e.g. deep-research escalation) doesn't
+    // leak into this one.
+    vi.mocked(useChatStore).mockImplementation(defaultUseChatStoreImpl)
     mockStoreState = {
       currentUserId: 'user-1',
       currentConversation: { id: 'conv-1', messages: [], userId: 'user-1' },
@@ -867,5 +903,433 @@ describe('useWebSocketChat', () => {
       })
     )
     expect(mockStartDeepResearch).toHaveBeenCalledWith('abc123-def456', 'msg-1')
+  })
+})
+
+/**
+ * Token rotation lifecycle.
+ *
+ * The hook must close + reopen the WebSocket before the token that
+ * authenticated it expires. The backend only validates auth at the WS
+ * upgrade, so a long-lived socket otherwise keeps trusting an expired token
+ * forever. One timer + a deferred-rotation effect:
+ *   - soft (-60s): if idle, rotate immediately. If streaming, mark
+ *     `pendingRotationRef = true` and let the in-flight response finish.
+ *   - deferred: when `isStreaming` transitions back to false, drain the
+ *     pending flag and rotate. No banner, no resend -- silent refresh.
+ *
+ * Tests below drive `onBeforeReconnect` directly to seed the rotation
+ * deadline (which mirrors what the real client would do during connect()),
+ * then advance fake timers / mutate `isStreaming` to assert the policy.
+ */
+describe('useWebSocketChat -- token rotation', () => {
+  const NOW_MS = 1_700_000_000_000 // arbitrary fixed wall clock
+  /** Token expires 10 minutes from "now" -- soft fires at +9m. */
+  const EXP_AT_S = Math.floor(NOW_MS / 1000) + 600
+  const SOFT_DELAY_MS = 540_000 // 600s - 60s
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW_MS)
+    // Restore default useChatStore mock impl in case a sibling test
+    // overrode it (mockImplementation persists across tests, only
+    // call counts are cleared by vi.clearAllMocks).
+    vi.mocked(useChatStore).mockImplementation(defaultUseChatStoreImpl)
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 'user-1', email: 'test@example.com' },
+      idToken: 'mock-id-token',
+      authRequired: true,
+      isAuthenticated: true,
+      isLoading: false,
+      accessToken: undefined,
+      error: undefined,
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    })
+    mockGetSession.mockResolvedValue({ idTokenExpiresAt: EXP_AT_S })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    // Restore default useAuth so subsequent suites aren't affected.
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 'user-1', email: 'test@example.com' },
+      idToken: 'mock-id-token',
+      authRequired: false,
+      isAuthenticated: true,
+      isLoading: false,
+      accessToken: undefined,
+      error: undefined,
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    })
+  })
+
+  /**
+   * Mounts the hook, drives `onBeforeReconnect` (which the real client invokes
+   * inside connect()), and waits for the rotation timers to be armed.
+   */
+  async function mountAndArmTimers() {
+    const rendered = renderWebSocketHook()
+    // The real client calls onBeforeReconnect during connect(); the mock
+    // doesn't, so do it manually to seed activeSocketTokenExpiresAt.
+    await act(async () => {
+      await capturedOnBeforeReconnect?.()
+    })
+    return rendered
+  }
+
+  test('soft timer rotates the socket when the chat is idle', async () => {
+    await mountAndArmTimers()
+    mockStoreState.isStreaming = false
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS)
+    })
+
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    // Idle rotation must be silent -- no error/banner is shown to the user.
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+    expect(mockSetStreaming).not.toHaveBeenCalledWith(false)
+  })
+
+  test('soft timer does NOT rotate when a stream is in flight (defer until done)', async () => {
+    const { rerender } = await mountAndArmTimers()
+
+    // Mark streaming and rerender so the hook's deferred-rotation effect
+    // observes the true -> false transition later. Without this rerender
+    // the hook's local `isStreaming` selector value never flips to true,
+    // so the eventual flip back to false wouldn't be a transition either.
+    mockStoreState.isStreaming = true
+    await act(async () => {
+      rerender()
+    })
+
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS)
+    })
+
+    // Soft timer fired and was deferred -- in-flight stream is preserved.
+    // Critically, no banner: the user should not see a "session expired"
+    // message just because the rotation timer fired.
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+    // No premature stream cleanup either: setStreaming(false) must NOT have
+    // been called as a side-effect of the rotation timer.
+    expect(mockSetStreaming).not.toHaveBeenCalledWith(false)
+
+    // Stream finishes -> the deferred rotation effect picks up the flag
+    // and rotates silently.
+    mockStoreState.isStreaming = false
+    await act(async () => {
+      rerender()
+    })
+
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+  })
+
+  test('rotation cycle invokes getSession exactly once (no SessionProvider race)', async () => {
+    await mountAndArmTimers()
+    // Initial mount counts as one getSession call (the connect path's
+    // refreshAuthBeforeReconnect). Reset and verify a single rotation cycle
+    // adds exactly one more call -- proving we don't accidentally fan out
+    // refreshes (which would cause invalid_grant with rotating refresh tokens).
+    mockGetSession.mockClear()
+    mockStoreState.isStreaming = false
+
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS)
+    })
+
+    // The mocked client.connect() is a no-op -- it does NOT re-invoke
+    // onBeforeReconnect like the real one would. So we manually drive the
+    // post-rotation refresh here and assert getSession was only called once.
+    await act(async () => {
+      await capturedOnBeforeReconnect?.()
+    })
+
+    expect(mockGetSession).toHaveBeenCalledTimes(1)
+  })
+
+  test('updated idTokenExpiresAt re-arms timers; old timers do not double-fire', async () => {
+    await mountAndArmTimers()
+    mockStoreState.isStreaming = false
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    // Refresh returns a NEW expiry far in the future. This should re-run the
+    // effect, clear the old timers, and arm new ones.
+    const NEW_EXP_AT_S = Math.floor(NOW_MS / 1000) + 1200
+    mockGetSession.mockResolvedValue({ idTokenExpiresAt: NEW_EXP_AT_S })
+    await act(async () => {
+      await capturedOnBeforeReconnect?.()
+    })
+
+    // Original soft deadline -- old timer would have fired here, but it was
+    // cleaned up by the effect's cleanup function. The new soft deadline is
+    // 1140s from NOW.
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS)
+    })
+
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+
+    // Advance to the new soft deadline; rotation should fire exactly once.
+    const NEW_SOFT_DELAY_MS = 1_140_000 - SOFT_DELAY_MS
+    await act(async () => {
+      vi.advanceTimersByTime(NEW_SOFT_DELAY_MS)
+    })
+
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+  })
+
+  test('failed getSession does not crash and leaves prior timers intact', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await mountAndArmTimers()
+    mockStoreState.isStreaming = false
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    // Subsequent refresh fails (e.g. transient network blip).
+    mockGetSession.mockRejectedValueOnce(new Error('network down'))
+    await act(async () => {
+      await capturedOnBeforeReconnect?.()
+    })
+
+    // Old timers were armed against the FIRST successful getSession's expiry.
+    // They should still fire on schedule even though the second refresh failed.
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS)
+    })
+
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('getSession before WS reconnect failed'),
+      expect.any(Error)
+    )
+    consoleWarnSpy.mockRestore()
+  })
+
+  test('does not arm rotation timer when authRequired is false', async () => {
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 'user-1', email: 'test@example.com' },
+      idToken: undefined,
+      authRequired: false,
+      isAuthenticated: true,
+      isLoading: false,
+      accessToken: undefined,
+      error: undefined,
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    })
+    renderWebSocketHook()
+    await act(async () => {
+      await capturedOnBeforeReconnect?.()
+    })
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS + 60_000)
+    })
+
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    // refreshAuthBeforeReconnect short-circuits when !authRequired, so
+    // getSession should never be called.
+    expect(mockGetSession).not.toHaveBeenCalled()
+  })
+
+  test('cleanup on unmount cancels the pending soft timer', async () => {
+    const { unmount } = await mountAndArmTimers()
+    mockStoreState.isStreaming = false
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    unmount()
+
+    await act(async () => {
+      vi.advanceTimersByTime(SOFT_DELAY_MS + 60_000)
+    })
+
+    // The unmount-triggered conversation-cleanup useEffect calls disconnect()
+    // exactly once. Crucially, NO additional connect/disconnect should fire
+    // from the rotation timer after unmount.
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Pre-flight check: a long-idle socket may technically be connected, but
+   * if the JWT that authenticated it has already expired (e.g. after a
+   * laptop sleep), `sendMessage` must NOT push the message through that
+   * socket. Instead, it should buffer the outgoing payload, rotate the
+   * socket, and have the new `onConnectionChange('connected')` handler
+   * drain the buffer once the fresh handshake completes.
+   */
+  test('sendMessage with stale token rotates socket and drains buffer on connect', async () => {
+    // mountAndArmTimers seeds activeSocketTokenExpiresAt to EXP_AT_S via
+    // the captured onBeforeReconnect call.
+    const { result } = await mountAndArmTimers()
+
+    // Move the wall clock past expiry. The soft timer was armed for SOFT_DELAY_MS
+    // from NOW_MS, so it has NOT fired yet -- but the token is already dead
+    // because real time advanced (e.g. the tab was suspended).
+    vi.setSystemTime(EXP_AT_S * 1000 + 1)
+
+    // Socket is "connected" but the underlying token is already past `exp`.
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    act(() => {
+      result.current.sendMessage('Hello after long idle')
+    })
+
+    // Pre-flight: must NOT send through the stale socket. Instead,
+    // rotate the connection so the new handshake carries a fresh cookie.
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+
+    // Simulate the handshake completing: the captured onConnectionChange
+    // is invoked with 'connected' and should drain the buffered message.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith(
+      'Hello after long idle',
+      expect.any(Array)
+    )
+    // No banner -- the rotation was completely silent for the user.
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+  })
+
+  test('sendMessage with valid token sends directly without rotating', async () => {
+    const { result } = await mountAndArmTimers()
+    // Token still valid (10min in the future). No pre-flight rotation.
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+
+    act(() => {
+      result.current.sendMessage('Hello')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Hello', expect.any(Array))
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `auth_expired` from the backend (per-message JWT re-auth on the WS
+   * handler) must NOT bubble up to the user as an error. The hook should:
+   *   1. NOT show a banner (no addErrorCard call)
+   *   2. Buffer the just-sent payload (lastSentMessageRef -> pendingOutgoingRef)
+   *   3. Rotate the socket so the new handshake reads a fresh idToken
+   *   4. On 'connected', drain the buffer and re-issue the original message
+   * Net effect for the user: brief reconnect, then their answer arrives.
+   */
+  test('auth_expired error triggers silent reconnect + auto-resend of last message', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    // Send a message so lastSentMessageRef is populated. doSend() captures
+    // both the content and the resolved data sources, mirroring what the
+    // user actually saw on the wire.
+    act(() => {
+      result.current.sendMessage('What is the weather?')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenLastCalledWith('What is the weather?', expect.any(Array))
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+    mockAddErrorCard.mockClear()
+    // Reset streaming/loading mocks so we only assert on post-error calls
+    // (sendMessage already drove them through their normal start-of-request
+    // sequence).
+    mockSetStreaming.mockClear()
+    mockSetLoading.mockClear()
+
+    // Backend rejects mid-workflow with auth_expired (handshake JWT past exp).
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+        details: 'Handshake token has expired',
+      })
+    })
+
+    // No banner: this is the whole point -- silent for the user.
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+    // Streaming/loading state must NOT be reset by onError -- the user's
+    // "request in progress" UX should bridge the rotation seamlessly.
+    // (The drain on 'connected' will eventually clear loading; for the
+    // onError step itself nothing should fire.)
+    expect(mockSetStreaming).not.toHaveBeenCalled()
+    expect(mockSetLoading).not.toHaveBeenCalled()
+    // Rotation kicked off.
+    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+
+    // Simulate the new handshake completing -> drain buffered message.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith(
+      'What is the weather?',
+      expect.any(Array)
+    )
+  })
+
+  test('non-auth_expired error still surfaces an error card and clears resend buffer', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    act(() => {
+      result.current.sendMessage('Hello')
+    })
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.disconnect.mockClear()
+    mockWsClient.connect.mockClear()
+    mockAddErrorCard.mockClear()
+
+    // Generic backend error (NOT auth_expired) -- must show a banner
+    // and must NOT trigger a silent rotation.
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'workflow_error',
+        message: 'Something broke in the agent',
+      })
+    })
+
+    expect(mockAddErrorCard).toHaveBeenCalled()
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.connect).not.toHaveBeenCalled()
+
+    // After this generic error, an unrelated 'connected' event (e.g. a
+    // routine soft rotation) must NOT replay the message: that would be
+    // a phantom resend the user never asked for.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
   })
 })
