@@ -1752,6 +1752,88 @@ describe('useWebSocketChat -- token rotation', () => {
   })
 
   /**
+   * Regression for cross-conversation data leak.
+   *
+   * The resend buffers (`pendingOutgoingRef`, `lastSentOutgoingRef`)
+   * and the consecutive-auth_expired counter are conversation-scoped.
+   * If left intact when the user switches conversations, the next
+   * conversation's freshly-handshaken socket would drain the previous
+   * conversation's payload into its own backend session on the first
+   * `connected` event -- delivering user-typed content (chat message
+   * or HITL response) to the wrong conversation's backend context.
+   *
+   * The conversation-switch cleanup must wipe both buffers, so the new
+   * conversation starts with a clean slate.
+   */
+  test('switching conversations clears resend buffers (no cross-conversation drain)', async () => {
+    mockStoreState.currentConversation = { id: 'conv-A', messages: [], userId: 'user-1' }
+
+    const { result, rerender } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    // 1) In conv A, send a message and let it through. lastSentOutgoingRef
+    //    is now populated with conv A's payload.
+    act(() => {
+      result.current.sendMessage('Secret payload for conv A')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenLastCalledWith(
+      'Secret payload for conv A',
+      expect.any(Array),
+    )
+
+    // 2) Backend rejects with auth_expired -- pendingOutgoingRef is
+    //    populated (copied from lastSentOutgoingRef), rotation kicks off.
+    //    At this point BOTH buffers carry conv A's payload.
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.rotate.mockClear()
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+
+    // 3) BEFORE the post-rotation 'connected' drain fires, the user
+    //    switches to conv B. The conversation-switch cleanup must wipe
+    //    both buffers; otherwise conv B's first `connected` would
+    //    silently submit conv A's payload to conv B's session.
+    mockStoreState.currentConversation = { id: 'conv-B', messages: [], userId: 'user-1' }
+    await act(async () => {
+      rerender()
+    })
+
+    // 4) Conv B's fresh socket connects. The drain MUST be a no-op:
+    //    pendingOutgoingRef is null, so neither sendMessage nor
+    //    sendInteractionResponse fire. Conv A's payload stays in conv A.
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.sendInteractionResponse.mockClear()
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+    expect(mockWsClient.sendInteractionResponse).not.toHaveBeenCalled()
+
+    // 5) An auth_expired arriving on conv B's socket must also be unable
+    //    to re-buffer conv A's payload (lastSentOutgoingRef was cleared
+    //    too). Without that ref, the auth_expired handler simply rotates
+    //    with no buffer -- no cross-conversation poisoning.
+    mockWsClient.rotate.mockClear()
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  /**
    * Stale-token preflight applies to HITL responses too. If the socket
    * still reports connected but its JWT is already past `exp`, the
    * backend will reject the answer. respondToInteraction must buffer the

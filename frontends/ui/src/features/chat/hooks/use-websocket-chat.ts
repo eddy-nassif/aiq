@@ -846,12 +846,30 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       wsClientRef.current.updateConversationId(currentConversation.id)
     }
 
-    // Cleanup on unmount
+    // Cleanup on unmount or conversation switch.
+    //
+    // CRITICAL: the resend buffers (pendingOutgoingRef,
+    // lastSentOutgoingRef) and the consecutive-auth_expired counter are
+    // conversation-scoped state. If we leave them populated across a
+    // conversation switch, the next conversation's freshly-handshaken
+    // socket would drain a payload from the previous conversation into
+    // its own backend session on the first `connected` event -- a
+    // user-data leak across conversation boundaries.
+    //
+    // Same goes for currentThinkingStepIdRef / currentStatusRef:
+    // stale IDs from the previous conversation must not be reused
+    // against the new socket.
     return () => {
       if (wsClientRef.current) {
         wsClientRef.current.disconnect()
         wsClientRef.current = null
       }
+      pendingOutgoingRef.current = null
+      lastSentOutgoingRef.current = null
+      consecutiveAuthExpiredRef.current = 0
+      pendingRotationRef.current = false
+      currentThinkingStepIdRef.current = null
+      currentStatusRef.current = null
     }
   }, [currentConversation?.id, autoConnect, createCallbacks, refreshAuthBeforeReconnect])
 
