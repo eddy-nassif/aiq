@@ -12,15 +12,23 @@ const mockOpenRightPanel = vi.fn()
 const mockCloseRightPanel = vi.fn()
 const mockSetTheme = vi.fn()
 
+const mockState = () => ({
+  toggleSessionsPanel: mockToggleSessionsPanel,
+  rightPanel: null as string | null,
+  openRightPanel: mockOpenRightPanel,
+  closeRightPanel: mockCloseRightPanel,
+  theme: 'system',
+  setTheme: mockSetTheme,
+})
+
 vi.mock('../store', () => ({
-  useLayoutStore: () => ({
-    toggleSessionsPanel: mockToggleSessionsPanel,
-    rightPanel: null,
-    openRightPanel: mockOpenRightPanel,
-    closeRightPanel: mockCloseRightPanel,
-    theme: 'system',
-    setTheme: mockSetTheme,
-  }),
+  useLayoutStore: Object.assign(
+    vi.fn((selector?: (s: any) => any) => {
+      const state = mockState()
+      return selector ? selector(state) : state
+    }),
+    { getState: () => mockState() }
+  ),
 }))
 
 describe('AppBar', () => {
@@ -165,6 +173,23 @@ describe('AppBar', () => {
       expect(screen.getByText('Default User')).toBeInTheDocument()
       expect(screen.getByRole('radiogroup', { name: /theme/i })).toBeInTheDocument()
       expect(screen.getByText('Authentication Not Configured')).toBeInTheDocument()
+    })
+
+    test('uses the KUI popover with the app background surface for user settings', async () => {
+      const user = userEvent.setup()
+
+      render(<AppBar isAuthenticated={true} authRequired={false} />)
+
+      await user.click(screen.getByRole('button', {
+        name: /default user.*authentication not configured/i,
+      }))
+
+      const popoverContent = screen.getByTestId('nv-popover-content')
+      expect(popoverContent).toHaveClass('nv-popover-content')
+      expect(popoverContent).toHaveClass('bg-surface-base')
+      expect(popoverContent).not.toHaveClass('!bg-transparent')
+      expect(popoverContent).not.toHaveClass('!shadow-none')
+      expect(popoverContent).not.toHaveStyle({ backgroundColor: 'transparent' })
     })
 
     test('does not show Sign Out button when auth is disabled', async () => {

@@ -15,7 +15,7 @@
 
 'use client'
 
-import { type CSSProperties, type FC, useCallback, useState } from 'react'
+import { type FC, memo, useCallback, useState } from 'react'
 import { Flex, Text, Button, Logo, Avatar, Popover, Divider } from '@/adapters/ui'
 import { Menu, Globe, Book, Lock, Logout, OpenExternal, Info, Moon, Sun } from '@/adapters/ui/icons'
 import { useLayoutStore } from '../store'
@@ -44,22 +44,11 @@ interface AppBarProps {
   onSignOut?: () => void
 }
 
-/** Transparent popover shell with outline only (no KUI fill/shadow). */
-const USER_MENU_POPOVER_CLASS =
-  '!bg-transparent !p-0 !shadow-none rounded-[var(--radius-md)] border border-base text-primary'
-
-const USER_MENU_POPOVER_STYLE: CSSProperties = {
-  backgroundColor: 'transparent',
-  boxShadow: 'none',
-  padding: 0,
-  marginTop: 4,
-}
-
 /**
  * Main navigation bar at the top of the application.
  * Controls sidebar toggles and navigation actions.
  */
-export const AppBar: FC<AppBarProps> = ({
+export const AppBar: FC<AppBarProps> = memo(function AppBar({
   sessionTitle = 'New Session',
   isAuthenticated = false,
   authRequired = false,
@@ -68,8 +57,8 @@ export const AppBar: FC<AppBarProps> = ({
   isNewSessionDisabled = false,
   onSignIn,
   onSignOut,
-}) => {
-  const { toggleSessionsPanel, rightPanel, openRightPanel, closeRightPanel } = useLayoutStore()
+}) {
+  const toggleSessionsPanel = useLayoutStore((s) => s.toggleSessionsPanel)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
 
   const handleMenuClick = useCallback(() => {
@@ -79,12 +68,13 @@ export const AppBar: FC<AppBarProps> = ({
 
   const handleAddSourcesClick = useCallback(() => {
     if (!isAuthenticated) return
+    const { rightPanel, closeRightPanel, openRightPanel } = useLayoutStore.getState()
     if (rightPanel === 'data-sources') {
       closeRightPanel()
     } else {
       openRightPanel('data-sources')
     }
-  }, [rightPanel, openRightPanel, closeRightPanel, isAuthenticated])
+  }, [isAuthenticated])
 
   const handleDocsClick = useCallback(() => {
     window.open('https://github.com/NVIDIA-AI-Blueprints/aiq', '_blank')
@@ -188,8 +178,7 @@ export const AppBar: FC<AppBarProps> = ({
               onOpenChange={setIsUserMenuOpen}
               side="bottom"
               align="end"
-              className={USER_MENU_POPOVER_CLASS}
-              style={USER_MENU_POPOVER_STYLE}
+              className="bg-surface-base"
               slotContent={<AuthDisabledContent />}
             >
               <Button
@@ -208,8 +197,7 @@ export const AppBar: FC<AppBarProps> = ({
               onOpenChange={setIsUserMenuOpen}
               side="bottom"
               align="end"
-              className={USER_MENU_POPOVER_CLASS}
-              style={USER_MENU_POPOVER_STYLE}
+              className="bg-surface-base"
               slotContent={<UserDropdownContent user={user} onSignOut={handleSignOut} />}
             >
               <Button
@@ -245,7 +233,7 @@ export const AppBar: FC<AppBarProps> = ({
       </Flex>
     </header>
   )
-}
+})
 
 /**
  * User dropdown content with profile info and sign out button
@@ -266,7 +254,8 @@ const APPEARANCE_SEGMENTS: { mode: ThemeMode; label: string }[] = [
 ]
 
 const AppearanceThemeControl: FC = () => {
-  const { theme, setTheme } = useLayoutStore()
+  const theme = useLayoutStore((s) => s.theme)
+  const setTheme = useLayoutStore((s) => s.setTheme)
 
   return (
     <Flex direction="col" gap="2">
