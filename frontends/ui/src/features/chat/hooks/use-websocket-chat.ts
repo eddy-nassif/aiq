@@ -86,6 +86,30 @@ type PendingOutgoing =
 const WS_REFRESH_SOFT_GUARD_SECONDS = 60
 
 /**
+ * Hard cap on consecutive `auth_expired` rotations before we surface a
+ * `session_expired` banner instead of silently rotating again.
+ *
+ * Why a cap is necessary: each `auth_expired` response from the backend
+ * goes through `rotate()`, which resets `reconnectCount` to 0. That means
+ * the WS client's own retry safety net (CONNECTION_FAILED after N
+ * exhausted reconnect attempts) never trips on the auth_expired path --
+ * the counter is wiped on every rotation. Without an upper bound here,
+ * a stale-NextAuth-cache or clock-skew condition where `getSession()`
+ * keeps handing us the same already-expired JWT can produce dozens of
+ * silent rotations per minute (one per `auth_expired` round-trip) until
+ * the refresh-token itself expires. That's invisible to the user (just a
+ * spinner that never stops), wasteful for server connection slots, and
+ * indistinguishable from a DDoS at the rate-limit layer.
+ *
+ * 1 is normal (the whole point of the silent reconnect path). 2 is the
+ * documented preflight-then-second-auth_expired chain (we have a test).
+ * >= 4 is a loop -- bail out, clear buffers, ask the user to sign in
+ * again. Counter is reset on any successful response/intermediate step
+ * because a single passing message proves the post-rotation auth is alive.
+ */
+const MAX_CONSECUTIVE_AUTH_EXPIRED = 3
+
+/**
  * Map NAT/backend error codes to frontend ErrorCode for consistent UI display.
  * This provides a generic mapping for any backend error.
  */
@@ -212,6 +236,17 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
    * state) so flipping the flag doesn't re-run the timer effect.
    */
   const pendingRotationRef = useRef(false)
+
+  /**
+   * Consecutive `auth_expired` rotations without a successful response in
+   * between. Incremented in `onError(auth_expired)`, reset to 0 by any
+   * `onResponse` / `onIntermediateStep` (a passing message proves auth is
+   * alive on the rotated socket). When it exceeds
+   * `MAX_CONSECUTIVE_AUTH_EXPIRED` we stop silently rotating and surface
+   * `auth.session_expired` so the user can re-sign-in. See the docstring
+   * on `MAX_CONSECUTIVE_AUTH_EXPIRED` for why this safety net is required.
+   */
+  const consecutiveAuthExpiredRef = useRef(0)
 
   /**
    * Single rotation primitive. Delegates to `client.rotate()` -- an atomic
@@ -357,6 +392,12 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
 
     return {
       onResponse: (content: string, status: string, isFinal: boolean, parentId?: string) => {
+        // A response on the wire proves the post-rotation auth is alive --
+        // clear the consecutive auth_expired counter so a *future* (and
+        // therefore independent) auth_expired starts the silent-reconnect
+        // budget from zero again.
+        consecutiveAuthExpiredRef.current = 0
+
         if (isStaleMessage(parentId)) {
           console.warn('Dropping stale system_response (parent_id mismatch)', { parentId, active: wsClientRef.current?.activeParentId })
           return
@@ -503,6 +544,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       },
 
       onIntermediateStep: (content: NATIntermediateStepContent | string, status: string, _parentId?: string) => {
+        // Same as onResponse: any backend-emitted frame on this socket
+        // proves the rotated handshake is honoured. Reset the consecutive
+        // auth_expired budget.
+        consecutiveAuthExpiredRef.current = 0
+
         // NAT uses an internal step ID (not the user message ID) for
         // parent_id on intermediate steps, so we can't stale-detect via
         // parent_id. Guard on isStreaming instead: if not streaming, the
@@ -617,6 +663,28 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         // and trigger a phantom reconnect instead of surfacing as a
         // banner.
         if (errorContent.code === 'user_auth_error' && errorContent.message === 'auth_expired') {
+          // Cap on consecutive auth_expired rotations: without it, a
+          // stale-NextAuth-cache or clock-skew condition can drive a
+          // silent rotation loop -- rotate() resets reconnectCount, so
+          // the WS client's own CONNECTION_FAILED safety net never
+          // triggers on this path. See MAX_CONSECUTIVE_AUTH_EXPIRED.
+          consecutiveAuthExpiredRef.current += 1
+          if (consecutiveAuthExpiredRef.current > MAX_CONSECUTIVE_AUTH_EXPIRED) {
+            consecutiveAuthExpiredRef.current = 0
+            lastSentOutgoingRef.current = null
+            pendingOutgoingRef.current = null
+            addErrorCard(
+              'auth.session_expired' as ErrorCode,
+              'Your session has expired. Please sign in again to continue.',
+              errorContent.details,
+            )
+            setCurrentStatus(null)
+            setStreaming(false)
+            setLoading(false)
+            clearPendingInteraction()
+            return
+          }
+
           const lastSent = lastSentOutgoingRef.current
           if (lastSent) {
             pendingOutgoingRef.current = lastSent

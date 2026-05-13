@@ -1633,6 +1633,125 @@ describe('useWebSocketChat -- token rotation', () => {
   })
 
   /**
+   * Regression for the silent-rotation-loop class of bug.
+   *
+   * `rotate()` resets `reconnectCount` to 0 inside the WS client, so the
+   * client's own CONNECTION_FAILED safety net never trips on the
+   * auth_expired path. Without an explicit cap in the hook, a
+   * stale-NextAuth-cache or clock-skew condition where `getSession()`
+   * keeps returning the same already-expired JWT can drive dozens of
+   * silent rotations per minute: the user just stares at a spinner that
+   * never resolves and the server is forced to churn handshake slots.
+   *
+   * The cap bails after MAX_CONSECUTIVE_AUTH_EXPIRED rotations, clears
+   * both resend buffers, and surfaces `auth.session_expired` so the user
+   * can re-sign-in.
+   */
+  test('cap on consecutive auth_expired surfaces session_expired after 3 rotations', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    act(() => {
+      result.current.sendMessage('What is X?')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenLastCalledWith('What is X?', expect.any(Array))
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.rotate.mockClear()
+    mockAddErrorCard.mockClear()
+
+    const triggerAuthExpired = () => {
+      act(() => {
+        capturedCallbacks.onError?.({
+          code: 'user_auth_error',
+          message: 'auth_expired',
+        })
+      })
+    }
+
+    // First three auth_expired errors: rotate silently as designed --
+    // this is the normal silent-reconnect path users rely on.
+    triggerAuthExpired()
+    triggerAuthExpired()
+    triggerAuthExpired()
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(3)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+
+    mockWsClient.rotate.mockClear()
+
+    // Fourth in a row: bail out. Banner up, NO more rotate, buffers
+    // cleared so a later recovery-driven 'connected' doesn't quietly
+    // replay the original payload.
+    triggerAuthExpired()
+
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
+    expect(mockAddErrorCard).toHaveBeenCalledWith(
+      'auth.session_expired',
+      expect.stringMatching(/sign in/i),
+      undefined,
+    )
+
+    mockWsClient.sendMessage.mockClear()
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The consecutive-auth_expired counter must reset on ANY successful
+   * frame from the backend. A passing response proves the post-rotation
+   * auth is alive, so a subsequent, independent auth_expired (e.g.
+   * the *next* JWT also expiring later in the session) starts a fresh
+   * silent-reconnect budget -- it must not inherit the previous run's
+   * counter and trip the cap prematurely.
+   */
+  test('successful response between auth_expired errors resets the rotation budget', async () => {
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    act(() => {
+      result.current.sendMessage('Q1')
+    })
+
+    mockWsClient.rotate.mockClear()
+    mockAddErrorCard.mockClear()
+
+    // 3 in a row -- right at the cap, still silent.
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        capturedCallbacks.onError?.({
+          code: 'user_auth_error',
+          message: 'auth_expired',
+        })
+      })
+    }
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(3)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+
+    // A response arrives -- the latest rotation succeeded after all.
+    // onResponse's stale guard requires isStreaming=true.
+    mockStoreState.isStreaming = true
+    act(() => {
+      capturedCallbacks.onResponse?.('Here is the answer', 'in_progress', false)
+    })
+
+    mockWsClient.rotate.mockClear()
+
+    // An independent auth_expired much later in the session must rotate
+    // silently again (NOT surface the banner from the previous run's
+    // counter).
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+  })
+
+  /**
    * Stale-token preflight applies to HITL responses too. If the socket
    * still reports connected but its JWT is already past `exp`, the
    * backend will reject the answer. respondToInteraction must buffer the

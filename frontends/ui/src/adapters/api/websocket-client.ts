@@ -84,6 +84,15 @@ export class NATWebSocketClient {
   private isIntentionallyClosed = false
   private errorBeforeClose = false
   private messageIdCounter = 0
+  /**
+   * In-flight rotation promise, set for the duration of `rotate()`.
+   * Subsequent rotate() calls await the same promise instead of each
+   * one independently detaching handlers from a socket that the previous
+   * rotate() already replaced -- the worst case there is two parallel
+   * `new WebSocket(...)` opens with the second one orphaning the first.
+   * See the `rotate()` docstring.
+   */
+  private rotationInFlight: Promise<void> | null = null
   /** ID of the last user message sent -- used by callbacks to detect stale responses */
   activeParentId: string | null = null
 
@@ -162,33 +171,52 @@ export class NATWebSocketClient {
    *      streaming/loading UX of the freshly-opened socket and potentially
    *      scheduling a redundant reconnect via `handleReconnect()`.
    *
-   * Two-layer defense:
+   * Three layers of defense:
    *   - Detach handlers from the old socket BEFORE closing it, so any
    *     late event the browser still tries to deliver hits a no-op.
    *   - Belt-and-braces: `setupEventHandlers()` also captures the source
    *     socket in each handler and early-returns unless `this.ws ===
    *     socket`, protecting against any other reordering we can't control.
+   *   - Idempotency: if a rotation is already in flight (e.g. soft-timer
+   *     fires while an `auth_expired` rotation is mid-handshake),
+   *     subsequent callers await the same in-flight promise instead of
+   *     each independently ripping handlers off whatever `this.ws`
+   *     currently is. Without this, the second rotate() would detach
+   *     handlers from the brand-new (still `connecting`) socket and could
+   *     leave two parallel `new WebSocket(...)` opens racing for the
+   *     `this.ws` slot.
    */
-  rotate = async (): Promise<void> => {
-    const oldSocket = this.ws
-    if (oldSocket) {
-      oldSocket.onopen = null
-      oldSocket.onclose = null
-      oldSocket.onerror = null
-      oldSocket.onmessage = null
-      try {
-        oldSocket.close()
-      } catch {
-        // close() can throw in test or polyfill environments; the rotation
-        // doesn't depend on a clean close because handlers are already
-        // detached.
-      }
-      if (this.ws === oldSocket) this.ws = null
+  rotate = (): Promise<void> => {
+    if (this.rotationInFlight) {
+      // Coalesce: every concurrent caller observes the same outcome.
+      return this.rotationInFlight
     }
-    this.isIntentionallyClosed = false
-    this.reconnectCount = 0
-    this.errorBeforeClose = false
-    await this.connect()
+    this.rotationInFlight = (async () => {
+      try {
+        const oldSocket = this.ws
+        if (oldSocket) {
+          oldSocket.onopen = null
+          oldSocket.onclose = null
+          oldSocket.onerror = null
+          oldSocket.onmessage = null
+          try {
+            oldSocket.close()
+          } catch {
+            // close() can throw in test or polyfill environments; the
+            // rotation doesn't depend on a clean close because handlers
+            // are already detached.
+          }
+          if (this.ws === oldSocket) this.ws = null
+        }
+        this.isIntentionallyClosed = false
+        this.reconnectCount = 0
+        this.errorBeforeClose = false
+        await this.connect()
+      } finally {
+        this.rotationInFlight = null
+      }
+    })()
+    return this.rotationInFlight
   }
 
   /**
