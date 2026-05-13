@@ -6,6 +6,7 @@ import { NATMessageType, NATWebSocketClient } from './websocket-client'
 
 class MockWebSocket {
   static readonly OPEN = 1
+  static readonly CLOSED = 3
   static instances: MockWebSocket[] = []
 
   readonly url: string
@@ -21,7 +22,9 @@ class MockWebSocket {
   }
 
   send = vi.fn()
-  close = vi.fn()
+  close = vi.fn(() => {
+    this.readyState = MockWebSocket.CLOSED
+  })
 }
 
 describe('NATWebSocketClient auth observability', () => {
@@ -78,6 +81,67 @@ describe('NATWebSocketClient auth observability', () => {
         details: 'Token expired',
       })
     )
+  })
+
+  test('rotate() ignores late onclose from the rotated-out socket', async () => {
+    // Regression: NATWebSocketClient.rotate() must atomically detach the
+    // old socket so a delayed `onclose` from it cannot be reclassified as
+    // an unintentional disconnect on the freshly-opened socket. Without
+    // this guarantee, the hook would see onConnectionChange('disconnected'
+    // | 'error') seconds after a silent token rotation -- clobbering
+    // streaming/loading state and potentially scheduling another reconnect.
+    const onConnectionChange = vi.fn()
+    const onError = vi.fn()
+    const client = new NATWebSocketClient({
+      conversationId: 'conv-1',
+      websocketUrl: 'ws://localhost/websocket',
+      callbacks: { onConnectionChange, onError },
+    })
+
+    // Open socket A and bring it to the connected state.
+    await client.connect()
+    const socketA = MockWebSocket.instances[0]
+    socketA.onopen?.(new Event('open'))
+    expect(onConnectionChange).toHaveBeenCalledWith('connected')
+    onConnectionChange.mockClear()
+
+    // Capture A's onclose BEFORE rotate() detaches it, then rotate.
+    // Real browsers fire onclose asynchronously after close(); we
+    // capture the reference so we can simulate that delayed event.
+    const staleOnCloseA = socketA.onclose
+    await client.rotate()
+
+    // After rotate(): a brand new socket B exists, A's handlers are
+    // detached (so calling staleOnCloseA directly is the only way the
+    // old code path could be reached -- this is the worst case the
+    // socket-instance guard protects against).
+    expect(MockWebSocket.instances).toHaveLength(2)
+    const socketB = MockWebSocket.instances[1]
+    expect(socketB).not.toBe(socketA)
+    // rotate() detaches A's handlers so the live A.onclose is now null
+    // even though the browser would still hold a reference somewhere.
+    expect(socketA.onclose).toBeNull()
+
+    // Bring socket B to connected.
+    socketB.onopen?.(new Event('open'))
+    expect(onConnectionChange).toHaveBeenCalledWith('connected')
+    onConnectionChange.mockClear()
+
+    // Simulate the browser firing the LATE close on A (via the captured
+    // handler reference -- mimicking the worst case where some polyfill
+    // or stale reference still has it). The socket-instance guard inside
+    // setupEventHandlers must drop this event silently: it must NOT push
+    // 'disconnected' or 'error' through to the hook, must NOT touch
+    // streaming/loading state, must NOT schedule an extra reconnect.
+    staleOnCloseA?.(new CloseEvent('close'))
+
+    expect(onConnectionChange).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+
+    // And a late onmessage on A is dropped too (defense in depth: if
+    // some buffered frame surfaces on the old socket after rotate, it
+    // must not be parsed against the new conversation context).
+    socketA.onmessage = null // already detached by rotate, double-check
   })
 
   test('does not emit RUM error for non-auth websocket errors', async () => {

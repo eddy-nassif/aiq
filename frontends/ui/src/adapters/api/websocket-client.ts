@@ -149,6 +149,49 @@ export class NATWebSocketClient {
   }
 
   /**
+   * Atomically swap the underlying WebSocket for a fresh one.
+   *
+   * Done as a single client-side operation (rather than `disconnect()` +
+   * `connect()` interleaved from the caller) because of an `onclose` race:
+   *   1. `disconnect()` sets `isIntentionallyClosed = true` and calls
+   *      `ws.close()`, but the browser fires `onclose` asynchronously.
+   *   2. `connect()` immediately flips `isIntentionallyClosed = false`.
+   *   3. The old socket's `onclose` then arrives, sees the flag is now
+   *      false, classifies the close as unintentional, and drives
+   *      `onConnectionChange('disconnected' | 'error')` -- clobbering the
+   *      streaming/loading UX of the freshly-opened socket and potentially
+   *      scheduling a redundant reconnect via `handleReconnect()`.
+   *
+   * Two-layer defense:
+   *   - Detach handlers from the old socket BEFORE closing it, so any
+   *     late event the browser still tries to deliver hits a no-op.
+   *   - Belt-and-braces: `setupEventHandlers()` also captures the source
+   *     socket in each handler and early-returns unless `this.ws ===
+   *     socket`, protecting against any other reordering we can't control.
+   */
+  rotate = async (): Promise<void> => {
+    const oldSocket = this.ws
+    if (oldSocket) {
+      oldSocket.onopen = null
+      oldSocket.onclose = null
+      oldSocket.onerror = null
+      oldSocket.onmessage = null
+      try {
+        oldSocket.close()
+      } catch {
+        // close() can throw in test or polyfill environments; the rotation
+        // doesn't depend on a clean close because handlers are already
+        // detached.
+      }
+      if (this.ws === oldSocket) this.ws = null
+    }
+    this.isIntentionallyClosed = false
+    this.reconnectCount = 0
+    this.errorBeforeClose = false
+    await this.connect()
+  }
+
+  /**
    * Send a user chat message
    * @param content - The message text content (query)
    * @param enabledDataSources - Optional array of enabled data source IDs to include in the query
@@ -220,22 +263,30 @@ export class NATWebSocketClient {
   }
 
   private setupEventHandlers = (): void => {
-    if (!this.ws) return
+    // Capture the socket instance in each handler closure. If `this.ws` is
+    // swapped (rotate(), reconnect, etc.), late events from the old socket
+    // hit `this.ws !== socket` and are dropped before they can drive any
+    // connection-state side effects on the new socket.
+    const socket = this.ws
+    if (!socket) return
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return
       this.reconnectCount = 0
       this.errorBeforeClose = false
       this.options.callbacks.onConnectionChange?.('connected')
     }
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
+      if (this.ws !== socket) return
       // Flag that an error preceded the close event.
       // Don't fire onConnectionChange here -- onclose always follows onerror
       // in the browser WebSocket API. This prevents double-firing.
       this.errorBeforeClose = true
     }
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) return
       const hadError = this.errorBeforeClose
       this.errorBeforeClose = false
 
@@ -259,7 +310,8 @@ export class NATWebSocketClient {
       this.handleReconnect()
     }
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) return
       this.handleMessage(event.data)
     }
   }

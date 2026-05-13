@@ -61,6 +61,17 @@ const EMPTY_MESSAGES: ChatMessage[] = []
 const EMPTY_CONVERSATIONS: Conversation[] = []
 
 /**
+ * Buffer entry for an outgoing payload that has to bridge a socket
+ * rotation. Discriminated by `kind` because both chat messages and HITL
+ * interaction responses can hit `auth_expired` at the backend, and the
+ * drain on the freshly-handshaken socket has to dispatch back to the
+ * right `NATWebSocketClient` method.
+ */
+type PendingOutgoing =
+  | { kind: 'message'; content: string; dataSources: string[] }
+  | { kind: 'interaction'; interactionId: string; parentId: string; response: string }
+
+/**
  * Seconds before token expiry to proactively rotate the WebSocket. The
  * backend only validates the JWT at the WS upgrade, so an open socket
  * keeps trusting an expired token until we close + reopen it.
@@ -174,20 +185,26 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
   const currentStatusRef = useRef<StatusType | null>(null)
 
   /**
-   * Single-slot buffer for an outgoing message deferred by a socket
+   * Single-slot buffer for an outgoing payload deferred by a socket
    * rotation (stale token pre-flight or `auth_expired` from backend).
    * Drained inside `onConnectionChange('connected')`. Single-slot is
    * sufficient because `setStreaming(true)` gates new sends during rotation.
+   *
+   * Tagged by `kind` because the drain has to dispatch back to either
+   * `sendMessage` (chat) or `sendInteractionResponse` (HITL). The backend
+   * applies the same per-message JWT expiry gate to both; without the kind
+   * tag a HITL response sent right after token expiry would either be
+   * dropped (no buffer) or wrongly replayed as the previous chat message.
    */
-  const pendingOutgoingRef = useRef<{ content: string; dataSources: string[] } | null>(null)
+  const pendingOutgoingRef = useRef<PendingOutgoing | null>(null)
 
   /**
-   * Last message written to the socket, kept until the workflow completes
+   * Last payload written to the socket, kept until the workflow completes
    * or hits a non-auth error. Lets us auto-resend on `auth_expired` without
    * losing the user's payload. Distinct from `pendingOutgoingRef` so a
-   * routine soft rotation doesn't replay an already-completed message.
+   * routine soft rotation doesn't replay an already-completed payload.
    */
-  const lastSentMessageRef = useRef<{ content: string; dataSources: string[] } | null>(null)
+  const lastSentOutgoingRef = useRef<PendingOutgoing | null>(null)
 
   /**
    * Set by the soft timer when it fires while streaming; consumed by the
@@ -197,8 +214,14 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
   const pendingRotationRef = useRef(false)
 
   /**
-   * Single rotation primitive. `connect()` runs `onBeforeReconnect`, which
-   * is the only call site for `getSession()` -- routing all refreshes
+   * Single rotation primitive. Delegates to `client.rotate()` -- an atomic
+   * client-side swap that detaches handlers from the old socket before
+   * closing it, eliminating the `onclose` race where a late close from
+   * the rotated-out socket would be misclassified as an unintentional
+   * disconnect on the freshly-opened one.
+   *
+   * `client.connect()` (invoked inside `rotate()`) runs `onBeforeReconnect`,
+   * which is the only call site for `getSession()` -- routing all refreshes
    * through one path avoids racing the SessionProvider polling (which
    * would cause `invalid_grant` with rotating refresh tokens).
    */
@@ -206,8 +229,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     const client = wsClientRef.current
     if (!client) return
     console.warn(`[WS] Rotating connection before token expiry (${reason})`)
-    client.disconnect()
-    void client.connect()
+    void client.rotate()
   }, [])
 
   const { user, authRequired, error: authError } = useAuth()
@@ -476,7 +498,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           clearPendingInteraction()
 
           // Workflow finished cleanly -- drop the resend buffer.
-          lastSentMessageRef.current = null
+          lastSentOutgoingRef.current = null
         }
       },
 
@@ -595,7 +617,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         // and trigger a phantom reconnect instead of surfacing as a
         // banner.
         if (errorContent.code === 'user_auth_error' && errorContent.message === 'auth_expired') {
-          const lastSent = lastSentMessageRef.current
+          const lastSent = lastSentOutgoingRef.current
           if (lastSent) {
             pendingOutgoingRef.current = lastSent
           }
@@ -621,7 +643,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           // UI is now in a failure state. Drop both buffers so a later
           // recovery-driven `connected` cannot silently replay the
           // pre-rotation payload behind the user's back.
-          lastSentMessageRef.current = null
+          lastSentOutgoingRef.current = null
           pendingOutgoingRef.current = null
           return
         }
@@ -650,7 +672,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         // Symmetric with CONNECTION_FAILED: any buffered outgoing payload
         // (preflight rotation, auth_expired) is no longer something the
         // user expects to be re-sent once we've shown them an error card.
-        lastSentMessageRef.current = null
+        lastSentOutgoingRef.current = null
         pendingOutgoingRef.current = null
       },
 
@@ -661,20 +683,32 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           invalidateHealthCache()
           dismissConnectionErrors()
 
-          // Drain any message buffered by a pre-flight rotation or
-          // `auth_expired`. Keeps the UX silent: the user typed once and
-          // it goes out the moment the fresh socket is up.
+          // Drain any payload buffered by a pre-flight rotation or
+          // `auth_expired`. Keeps the UX silent: the user acted once and
+          // it goes out the moment the fresh socket is up. Dispatch by
+          // `kind` so both chat messages AND HITL interaction responses
+          // survive a rotation -- the backend's per-message expiry gate
+          // applies to both.
           const pending = pendingOutgoingRef.current
-          if (pending) {
+          const client = wsClientRef.current
+          if (pending && client) {
             pendingOutgoingRef.current = null
-            wsClientRef.current?.sendMessage(pending.content, pending.dataSources)
+            if (pending.kind === 'message') {
+              client.sendMessage(pending.content, pending.dataSources)
+            } else {
+              client.sendInteractionResponse(
+                pending.interactionId,
+                pending.parentId,
+                pending.response,
+              )
+            }
             // Mirror doSend(): the drain just put a payload on the wire,
-            // so it is now the canonical "last sent message". Without
-            // this, a pre-flight rotation that gets immediately hit by a
-            // second `auth_expired` on the fresh socket would have a null
-            // `lastSentMessageRef` and silently drop the user's message
+            // so it is now the canonical "last sent". Without this, a
+            // pre-flight rotation that gets immediately hit by a second
+            // `auth_expired` on the fresh socket would have a null
+            // `lastSentOutgoingRef` and silently drop the user's payload
             // (the auth_expired handler couldn't re-buffer it).
-            lastSentMessageRef.current = pending
+            lastSentOutgoingRef.current = pending
             setLoading(false)
           }
           return
@@ -817,7 +851,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           // Remember the payload so a mid-workflow `auth_expired` can
           // transparently re-issue it after the reconnect. Cleared on
           // isFinal or any non-auth error.
-          lastSentMessageRef.current = { content, dataSources: dataSourcesForMessage }
+          lastSentOutgoingRef.current = {
+            kind: 'message',
+            content,
+            dataSources: dataSourcesForMessage,
+          }
           setLoading(false)
         } else {
           addErrorCard('connection.failed', 'WebSocket connection failed')
@@ -836,7 +874,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       }
 
       if (wsClientRef.current?.isConnected() && tokenIsStale()) {
-        pendingOutgoingRef.current = { content, dataSources: dataSourcesForMessage }
+        pendingOutgoingRef.current = {
+          kind: 'message',
+          content,
+          dataSources: dataSourcesForMessage,
+        }
         rotateSocket('preflight')
         return
       }
@@ -889,6 +931,14 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
 
   /**
    * Respond to a pending interaction (clarification, approval, etc.)
+   *
+   * Mirrors `sendMessage`'s rotation handling: the backend applies the
+   * same per-message JWT expiry gate to `WebSocketUserInteractionResponseMessage`
+   * as it does to chat messages, so a HITL response that lands right after
+   * token expiry would otherwise be silently lost (no `lastSentOutgoingRef`
+   * for the rotation handler to replay). Preflight on stale token, buffer
+   * the typed payload, and let `onConnectionChange('connected')` drain it
+   * via `sendInteractionResponse` once the fresh handshake completes.
    */
   const respondToInteraction = useCallback(
     (response: string) => {
@@ -915,19 +965,51 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         }
       }
 
-      // Send response via WebSocket
-      if (wsClientRef.current?.isConnected()) {
-        wsClientRef.current.sendInteractionResponse(
-          pendingInteraction.id,
-          pendingInteraction.parentId,
-          response
-        )
-        // Resume streaming
+      const interactionPayload: PendingOutgoing = {
+        kind: 'interaction',
+        interactionId: pendingInteraction.id,
+        parentId: pendingInteraction.parentId,
+        response,
+      }
+
+      const doSend = () => {
+        if (wsClientRef.current?.isConnected()) {
+          wsClientRef.current.sendInteractionResponse(
+            pendingInteraction.id,
+            pendingInteraction.parentId,
+            response
+          )
+          // Record the HITL payload so a follow-up `auth_expired` can
+          // transparently re-issue THIS response (not a stale chat
+          // payload that happened to be the previous `lastSentOutgoing`).
+          lastSentOutgoingRef.current = interactionPayload
+          setStreaming(true)
+          setLoading(true)
+        } else {
+          addErrorCard('connection.failed', 'WebSocket not connected')
+        }
+      }
+
+      // Stale-token pre-flight (mirrors sendMessage): the socket may
+      // report connected, but if the handshake JWT is already past `exp`
+      // the backend will respond with `auth_expired` and our HITL response
+      // would be lost. Buffer + rotate; the drain re-issues it.
+      const tokenIsStale = (): boolean => {
+        if (!authRequired || !activeSocketTokenExpiresAt) return false
+        return Date.now() >= activeSocketTokenExpiresAt * 1000
+      }
+
+      if (wsClientRef.current?.isConnected() && tokenIsStale()) {
+        pendingOutgoingRef.current = interactionPayload
+        // Keep the "working" UX visible across the rotation so the user
+        // doesn't see their answer disappear into an idle screen.
         setStreaming(true)
         setLoading(true)
-      } else {
-        addErrorCard('connection.failed', 'WebSocket not connected')
+        rotateSocket('preflight-interaction')
+        return
       }
+
+      doSend()
     },
     [
       pendingInteraction,
@@ -937,6 +1019,9 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       addErrorCard,
       setStreaming,
       setLoading,
+      authRequired,
+      activeSocketTokenExpiresAt,
+      rotateSocket,
     ]
   )
 

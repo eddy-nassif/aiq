@@ -190,6 +190,7 @@ vi.mock('@/features/documents/store', () => ({
 const mockWsClient = {
   connect: vi.fn(),
   disconnect: vi.fn(),
+  rotate: vi.fn(),
   sendMessage: vi.fn(),
   sendInteractionResponse: vi.fn(),
   isConnected: vi.fn(() => false),
@@ -982,6 +983,7 @@ describe('useWebSocketChat -- token rotation', () => {
   test('soft timer rotates the socket when the chat is idle', async () => {
     await mountAndArmTimers()
     mockStoreState.isStreaming = false
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -989,8 +991,11 @@ describe('useWebSocketChat -- token rotation', () => {
       vi.advanceTimersByTime(SOFT_DELAY_MS)
     })
 
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    // Rotation goes through the atomic client.rotate() primitive -- NOT
+    // the disconnect()+connect() interleave, which has the onclose race
+    // (see NATWebSocketClient.rotate() docstring).
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
     // Idle rotation must be silent -- no error/banner is shown to the user.
     expect(mockAddErrorCard).not.toHaveBeenCalled()
     expect(mockSetStreaming).not.toHaveBeenCalledWith(false)
@@ -1008,6 +1013,7 @@ describe('useWebSocketChat -- token rotation', () => {
       rerender()
     })
 
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -1018,8 +1024,8 @@ describe('useWebSocketChat -- token rotation', () => {
     // Soft timer fired and was deferred -- in-flight stream is preserved.
     // Critically, no banner: the user should not see a "session expired"
     // message just because the rotation timer fired.
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
     expect(mockWsClient.disconnect).not.toHaveBeenCalled()
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
     expect(mockAddErrorCard).not.toHaveBeenCalled()
     // No premature stream cleanup either: setStreaming(false) must NOT have
     // been called as a side-effect of the rotation timer.
@@ -1032,8 +1038,8 @@ describe('useWebSocketChat -- token rotation', () => {
       rerender()
     })
 
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
     expect(mockAddErrorCard).not.toHaveBeenCalled()
   })
 
@@ -1063,6 +1069,7 @@ describe('useWebSocketChat -- token rotation', () => {
   test('updated idTokenExpiresAt re-arms timers; old timers do not double-fire', async () => {
     await mountAndArmTimers()
     mockStoreState.isStreaming = false
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -1081,8 +1088,7 @@ describe('useWebSocketChat -- token rotation', () => {
       vi.advanceTimersByTime(SOFT_DELAY_MS)
     })
 
-    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
 
     // Advance to the new soft deadline; rotation should fire exactly once.
     const NEW_SOFT_DELAY_MS = 1_140_000 - SOFT_DELAY_MS
@@ -1090,14 +1096,14 @@ describe('useWebSocketChat -- token rotation', () => {
       vi.advanceTimersByTime(NEW_SOFT_DELAY_MS)
     })
 
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
   })
 
   test('failed getSession does not crash and leaves prior timers intact', async () => {
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await mountAndArmTimers()
     mockStoreState.isStreaming = false
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -1113,8 +1119,7 @@ describe('useWebSocketChat -- token rotation', () => {
       vi.advanceTimersByTime(SOFT_DELAY_MS)
     })
 
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
     expect(consoleWarnSpy).toHaveBeenCalledWith(
       expect.stringContaining('getSession before WS reconnect failed'),
       expect.any(Error)
@@ -1138,6 +1143,7 @@ describe('useWebSocketChat -- token rotation', () => {
     await act(async () => {
       await capturedOnBeforeReconnect?.()
     })
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -1145,8 +1151,7 @@ describe('useWebSocketChat -- token rotation', () => {
       vi.advanceTimersByTime(SOFT_DELAY_MS + 60_000)
     })
 
-    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
     // refreshAuthBeforeReconnect short-circuits when !authRequired, so
     // getSession should never be called.
     expect(mockGetSession).not.toHaveBeenCalled()
@@ -1155,6 +1160,7 @@ describe('useWebSocketChat -- token rotation', () => {
   test('cleanup on unmount cancels the pending soft timer', async () => {
     const { unmount } = await mountAndArmTimers()
     mockStoreState.isStreaming = false
+    mockWsClient.rotate.mockClear()
     mockWsClient.disconnect.mockClear()
     mockWsClient.connect.mockClear()
 
@@ -1165,10 +1171,10 @@ describe('useWebSocketChat -- token rotation', () => {
     })
 
     // The unmount-triggered conversation-cleanup useEffect calls disconnect()
-    // exactly once. Crucially, NO additional connect/disconnect should fire
-    // from the rotation timer after unmount.
+    // exactly once. Crucially, NO rotation should fire from the rotation
+    // timer after unmount.
     expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
   })
 
   /**
@@ -1192,8 +1198,7 @@ describe('useWebSocketChat -- token rotation', () => {
     // Socket is "connected" but the underlying token is already past `exp`.
     mockWsClient.isConnected.mockReturnValue(true)
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
 
     act(() => {
       result.current.sendMessage('Hello after long idle')
@@ -1202,8 +1207,7 @@ describe('useWebSocketChat -- token rotation', () => {
     // Pre-flight: must NOT send through the stale socket. Instead,
     // rotate the connection so the new handshake carries a fresh cookie.
     expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
 
     // Simulate the handshake completing: the captured onConnectionChange
     // is invoked with 'connected' and should drain the buffered message.
@@ -1224,22 +1228,21 @@ describe('useWebSocketChat -- token rotation', () => {
     // Token still valid (10min in the future). No pre-flight rotation.
     mockWsClient.isConnected.mockReturnValue(true)
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
 
     act(() => {
       result.current.sendMessage('Hello')
     })
 
     expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Hello', expect.any(Array))
-    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
   })
 
   /**
    * `auth_expired` from the backend (per-message JWT re-auth on the WS
    * handler) must NOT bubble up to the user as an error. The hook should:
    *   1. NOT show a banner (no addErrorCard call)
-   *   2. Buffer the just-sent payload (lastSentMessageRef -> pendingOutgoingRef)
+   *   2. Buffer the just-sent payload (lastSentOutgoingRef -> pendingOutgoingRef)
    *   3. Rotate the socket so the new handshake reads a fresh idToken
    *   4. On 'connected', drain the buffer and re-issue the original message
    * Net effect for the user: brief reconnect, then their answer arrives.
@@ -1248,7 +1251,7 @@ describe('useWebSocketChat -- token rotation', () => {
     const { result } = await mountAndArmTimers()
     mockWsClient.isConnected.mockReturnValue(true)
 
-    // Send a message so lastSentMessageRef is populated. doSend() captures
+    // Send a message so lastSentOutgoingRef is populated. doSend() captures
     // both the content and the resolved data sources, mirroring what the
     // user actually saw on the wire.
     act(() => {
@@ -1257,8 +1260,7 @@ describe('useWebSocketChat -- token rotation', () => {
     expect(mockWsClient.sendMessage).toHaveBeenLastCalledWith('What is the weather?', expect.any(Array))
 
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
     mockAddErrorCard.mockClear()
     // Reset streaming/loading mocks so we only assert on post-error calls
     // (sendMessage already drove them through their normal start-of-request
@@ -1283,9 +1285,8 @@ describe('useWebSocketChat -- token rotation', () => {
     // onError step itself nothing should fire.)
     expect(mockSetStreaming).not.toHaveBeenCalled()
     expect(mockSetLoading).not.toHaveBeenCalled()
-    // Rotation kicked off.
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    // Rotation kicked off via the atomic client.rotate() primitive.
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
 
     // Simulate the new handshake completing -> drain buffered message.
     act(() => {
@@ -1314,8 +1315,7 @@ describe('useWebSocketChat -- token rotation', () => {
     })
 
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
     mockAddErrorCard.mockClear()
 
     // Backend rejects with auth_expired -- buffer is populated and rotation kicks off.
@@ -1325,8 +1325,7 @@ describe('useWebSocketChat -- token rotation', () => {
         message: 'auth_expired',
       })
     })
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
 
     // Rotation cannot recover -- WS client exhausts retries and emits
     // CONNECTION_FAILED. UI shows a failure card to the user.
@@ -1360,8 +1359,7 @@ describe('useWebSocketChat -- token rotation', () => {
     })
 
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
     mockAddErrorCard.mockClear()
 
     // Generic backend error (NOT auth_expired) -- must show a banner
@@ -1374,8 +1372,7 @@ describe('useWebSocketChat -- token rotation', () => {
     })
 
     expect(mockAddErrorCard).toHaveBeenCalled()
-    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
 
     // After this generic error, an unrelated 'connected' event (e.g. a
     // routine soft rotation) must NOT replay the message: that would be
@@ -1403,8 +1400,7 @@ describe('useWebSocketChat -- token rotation', () => {
     })
 
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
     mockAddErrorCard.mockClear()
 
     act(() => {
@@ -1417,8 +1413,7 @@ describe('useWebSocketChat -- token rotation', () => {
     // Must be treated as a generic application error: banner shown, NO
     // rotation, NO drain on the next 'connected'.
     expect(mockAddErrorCard).toHaveBeenCalled()
-    expect(mockWsClient.disconnect).not.toHaveBeenCalled()
-    expect(mockWsClient.connect).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).not.toHaveBeenCalled()
 
     act(() => {
       capturedCallbacks.onConnectionChange?.('connected')
@@ -1428,9 +1423,9 @@ describe('useWebSocketChat -- token rotation', () => {
 
   /**
    * Regression: a pre-flight rotation that drains the buffer must update
-   * `lastSentMessageRef`, so a follow-up `auth_expired` on the freshly
+   * `lastSentOutgoingRef`, so a follow-up `auth_expired` on the freshly
    * rotated socket can re-buffer the same payload. Without this, the
-   * second auth_expired finds `lastSentMessageRef === null` and the
+   * second auth_expired finds `lastSentOutgoingRef === null` and the
    * user's message is silently dropped (no error card, no resend).
    */
   test('preflight rotation -> drain -> auth_expired chains the resend (no silent loss)', async () => {
@@ -1440,8 +1435,7 @@ describe('useWebSocketChat -- token rotation', () => {
     vi.setSystemTime(EXP_AT_S * 1000 + 1)
     mockWsClient.isConnected.mockReturnValue(true)
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
 
     act(() => {
       result.current.sendMessage('Pre-flight payload')
@@ -1449,8 +1443,7 @@ describe('useWebSocketChat -- token rotation', () => {
 
     // Pre-flight: buffered, rotation kicked off, NOT yet on the wire.
     expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
 
     // Fresh socket connects -> drain puts the buffered payload on the wire.
     act(() => {
@@ -1459,13 +1452,12 @@ describe('useWebSocketChat -- token rotation', () => {
     expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Pre-flight payload', expect.any(Array))
 
     mockWsClient.sendMessage.mockClear()
-    mockWsClient.disconnect.mockClear()
-    mockWsClient.connect.mockClear()
+    mockWsClient.rotate.mockClear()
     mockAddErrorCard.mockClear()
 
     // The fresh socket ALSO comes back with auth_expired (e.g. a NextAuth
     // refresh race left two stale tokens in a row). The handler must be
-    // able to re-buffer the same payload via lastSentMessageRef -- which
+    // able to re-buffer the same payload via lastSentOutgoingRef -- which
     // the drain block is responsible for populating.
     act(() => {
       capturedCallbacks.onError?.({
@@ -1473,17 +1465,226 @@ describe('useWebSocketChat -- token rotation', () => {
         message: 'auth_expired',
       })
     })
-    expect(mockWsClient.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockWsClient.connect).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
     // Critically: silent for the user. No banner.
     expect(mockAddErrorCard).not.toHaveBeenCalled()
 
     // Second drain must put the SAME payload back on the wire. If the
-    // drain block forgot to populate lastSentMessageRef, this assertion
+    // drain block forgot to populate lastSentOutgoingRef, this assertion
     // fails and the user's message is silently lost.
     act(() => {
       capturedCallbacks.onConnectionChange?.('connected')
     })
     expect(mockWsClient.sendMessage).toHaveBeenCalledWith('Pre-flight payload', expect.any(Array))
+  })
+
+  /**
+   * Regression for the HITL `auth_expired` gap: the backend applies the
+   * same per-message expiry gate to `WebSocketUserInteractionResponseMessage`
+   * as it does to chat messages. If the user answers a HITL prompt right
+   * after the handshake token expires, `respondToInteraction()` used to
+   * bypass the rotation buffer entirely: it sent directly through
+   * `sendInteractionResponse()`, never populating `lastSentOutgoingRef`.
+   * The auth_expired handler would then either replay the previous chat
+   * message OR (if no prior chat existed) rotate with an empty buffer --
+   * silently losing the user's answer.
+   *
+   * The fix mirrors `sendMessage`'s rotation handling: record the HITL
+   * payload in `lastSentOutgoingRef` after a successful send, and let
+   * `onError(auth_expired)` re-buffer it for the post-rotation drain.
+   */
+  test('respondToInteraction + auth_expired re-issues the HITL response (not lost, not replaced)', async () => {
+    mockStoreState.pendingInteraction = {
+      id: 'prompt-1',
+      parentId: 'parent-1',
+      inputType: 'text',
+      text: 'Clarify your question?',
+    }
+    mockStoreState.currentConversation = {
+      id: 'conv-1',
+      messages: [
+        {
+          id: 'msg-1',
+          messageType: 'prompt',
+          isPromptResponded: false,
+          content: 'Clarify your question?',
+        },
+      ],
+      userId: 'user-1',
+    }
+
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendInteractionResponse.mockClear()
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.rotate.mockClear()
+    mockAddErrorCard.mockClear()
+
+    // User answers the HITL prompt -- normal connected path.
+    act(() => {
+      result.current.respondToInteraction('Yes, proceed with option A')
+    })
+    expect(mockWsClient.sendInteractionResponse).toHaveBeenCalledWith(
+      'prompt-1',
+      'parent-1',
+      'Yes, proceed with option A'
+    )
+
+    mockWsClient.sendInteractionResponse.mockClear()
+    mockWsClient.sendMessage.mockClear()
+
+    // Backend rejects mid-workflow with auth_expired -- the per-message
+    // re-auth gate fired on the HITL response.
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+
+    // Silent rotation, no banner.
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+
+    // Fresh socket connects -> drain MUST re-issue the HITL response
+    // (NOT sendMessage of a stale chat payload).
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendInteractionResponse).toHaveBeenCalledWith(
+      'prompt-1',
+      'parent-1',
+      'Yes, proceed with option A'
+    )
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Regression for the cross-payload poisoning case: previously the
+   * resend buffer only tracked chat messages, so a HITL answer after a
+   * previously-sent chat message would replay the OLD chat message on
+   * auth_expired, not the user's HITL response. With the discriminated
+   * union, the HITL send overwrites `lastSentOutgoingRef` and the drain
+   * dispatches by `kind`.
+   */
+  test('HITL response after a chat send replays the HITL on auth_expired (no cross-payload poisoning)', async () => {
+    mockStoreState.pendingInteraction = {
+      id: 'prompt-2',
+      parentId: 'parent-2',
+      inputType: 'text',
+      text: 'Need more detail?',
+    }
+    mockStoreState.currentConversation = {
+      id: 'conv-1',
+      messages: [
+        {
+          id: 'msg-1',
+          messageType: 'prompt',
+          isPromptResponded: false,
+          content: 'Need more detail?',
+        },
+      ],
+      userId: 'user-1',
+    }
+
+    const { result } = await mountAndArmTimers()
+    mockWsClient.isConnected.mockReturnValue(true)
+
+    // 1) Earlier chat send populates lastSentOutgoingRef with a 'message' payload.
+    act(() => {
+      result.current.sendMessage('Original chat question')
+    })
+    expect(mockWsClient.sendMessage).toHaveBeenLastCalledWith('Original chat question', expect.any(Array))
+
+    mockWsClient.sendMessage.mockClear()
+    mockWsClient.sendInteractionResponse.mockClear()
+    mockWsClient.rotate.mockClear()
+
+    // 2) HITL response on the same socket -- must OVERWRITE lastSentOutgoingRef.
+    act(() => {
+      result.current.respondToInteraction('Yes, full report please')
+    })
+    expect(mockWsClient.sendInteractionResponse).toHaveBeenCalledWith(
+      'prompt-2',
+      'parent-2',
+      'Yes, full report please'
+    )
+
+    mockWsClient.sendInteractionResponse.mockClear()
+
+    // 3) Backend returns auth_expired AFTER the HITL response.
+    act(() => {
+      capturedCallbacks.onError?.({
+        code: 'user_auth_error',
+        message: 'auth_expired',
+      })
+    })
+
+    // 4) Drain MUST replay the HITL response, not the earlier chat message.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendInteractionResponse).toHaveBeenCalledWith(
+      'prompt-2',
+      'parent-2',
+      'Yes, full report please'
+    )
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Stale-token preflight applies to HITL responses too. If the socket
+   * still reports connected but its JWT is already past `exp`, the
+   * backend will reject the answer. respondToInteraction must buffer the
+   * payload, rotate, and let the drain re-issue it -- exactly as
+   * sendMessage does.
+   */
+  test('respondToInteraction with stale token rotates and drains the HITL response', async () => {
+    mockStoreState.pendingInteraction = {
+      id: 'prompt-3',
+      parentId: 'parent-3',
+      inputType: 'text',
+      text: 'Confirm?',
+    }
+    mockStoreState.currentConversation = {
+      id: 'conv-1',
+      messages: [
+        {
+          id: 'msg-1',
+          messageType: 'prompt',
+          isPromptResponded: false,
+          content: 'Confirm?',
+        },
+      ],
+      userId: 'user-1',
+    }
+
+    const { result } = await mountAndArmTimers()
+
+    // Move past expiry so the preflight branch fires.
+    vi.setSystemTime(EXP_AT_S * 1000 + 1)
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendInteractionResponse.mockClear()
+    mockWsClient.rotate.mockClear()
+
+    act(() => {
+      result.current.respondToInteraction('Yes, confirmed')
+    })
+
+    // Preflight: rotate kicked off, response NOT yet on the wire.
+    expect(mockWsClient.sendInteractionResponse).not.toHaveBeenCalled()
+    expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+
+    // Fresh socket connects -> drain dispatches via sendInteractionResponse,
+    // NOT sendMessage.
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+    expect(mockWsClient.sendInteractionResponse).toHaveBeenCalledWith(
+      'prompt-3',
+      'parent-3',
+      'Yes, confirmed'
+    )
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
   })
 })
