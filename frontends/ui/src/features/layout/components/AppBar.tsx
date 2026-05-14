@@ -17,7 +17,7 @@
 
 import { type FC, memo, useCallback, useState } from 'react'
 import { Flex, Text, Button, Logo, Avatar, Popover, Divider } from '@/adapters/ui'
-import { Menu, Globe, Book, Lock, Logout, OpenExternal, Info, Moon, Sun } from '@/adapters/ui/icons'
+import { Globe, Book, Lock, Logout, OpenExternal, Info, Moon, Sun, ChatMessage } from '@/adapters/ui/icons'
 import { useLayoutStore } from '../store'
 import type { ThemeMode } from '../types'
 
@@ -49,7 +49,7 @@ interface AppBarProps {
  * Controls sidebar toggles and navigation actions.
  */
 export const AppBar: FC<AppBarProps> = memo(function AppBar({
-  sessionTitle = 'New Session',
+  sessionTitle = '',
   isAuthenticated = false,
   authRequired = false,
   user,
@@ -115,7 +115,9 @@ export const AppBar: FC<AppBarProps> = memo(function AppBar({
               </Text>
             </Flex>
           </Button>
-
+          <Flex justify="start">
+          <Divider orientation="vertical" />
+          </Flex>
           <Button
             kind="tertiary"
             size="small"
@@ -125,11 +127,15 @@ export const AppBar: FC<AppBarProps> = memo(function AppBar({
             title="Toggle sessions sidebar"
           >
             <Flex align="center" gap="1">
-              <Menu className="h-4 w-4" />
-              <Text kind="label/regular/md">Sessions</Text>
+              <ChatMessage className="h-4 w-4" />
+              <Text kind="label/bold/sm">Sessions</Text>
             </Flex>
           </Button>
-
+          {sessionTitle && (
+            <Flex justify="start">
+              <Divider orientation="vertical" />
+            </Flex>
+          )}
           {isAuthenticated && (
             <div className="ml-4 hidden min-w-0 flex-1 items-center md:flex">
               <Text
