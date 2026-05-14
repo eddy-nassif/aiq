@@ -86,7 +86,7 @@ export const MainLayout: FC<MainLayoutProps> = ({
   const updateConversationTitle = useChatStore((s) => s.updateConversationTitle)
 
   const isResearchPanelOpen = useLayoutStore((s) => s.rightPanel === 'research')
-  const closeRightPanel = useLayoutStore((s) => s.closeRightPanel)
+  const openRightPanel = useLayoutStore((s) => s.openRightPanel)
   const prefersReducedMotion = useReducedMotion()
 
   // Deep research SSE hook - manages connection when deep research starts
@@ -105,11 +105,12 @@ export const MainLayout: FC<MainLayoutProps> = ({
   )
 
   // Start a new unsaved draft session and clear URL until first interaction.
+  // Open Data Sources panel so it stays visible (default panel for new sessions).
   const handleNewSession = useCallback(() => {
     startNewSessionDraft()
     clearSessionUrl()
-    closeRightPanel()
-  }, [startNewSessionDraft, clearSessionUrl, closeRightPanel])
+    openRightPanel('data-sources')
+  }, [startNewSessionDraft, clearSessionUrl, openRightPanel])
 
   // Wrap deleteConversation to clear URL if deleting current session
   const handleDeleteSession = useCallback(
