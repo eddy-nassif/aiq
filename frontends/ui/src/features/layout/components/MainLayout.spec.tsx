@@ -134,7 +134,7 @@ describe('MainLayout', () => {
     expect(screen.getByTestId('app-bar')).toHaveTextContent('Test Session')
   })
 
-  test('shows "New Session" when no current conversation', () => {
+  test('shows no session title when no current conversation', () => {
     vi.mocked(useChatStore).mockImplementationOnce((selector?: (s: any) => any) => {
       const state = {
         currentConversation: null,
@@ -154,13 +154,13 @@ describe('MainLayout', () => {
 
     render(<MainLayout />)
 
-    expect(screen.getByTestId('app-bar')).toHaveTextContent('New Session')
+    expect(screen.getByTestId('app-bar')).toHaveTextContent('')
   })
 
   test('passes auth state to components', () => {
     const onSignIn = vi.fn()
     const onSignOut = vi.fn()
-    const user = { name: 'Test User', email: 'test@example.com' }
+    const user = { name: 'Test User', email: 'test@nvidia.com' }
 
     render(
       <MainLayout isAuthenticated={true} user={user} onSignIn={onSignIn} onSignOut={onSignOut} />

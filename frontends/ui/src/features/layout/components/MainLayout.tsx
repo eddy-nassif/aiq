@@ -152,7 +152,7 @@ export const MainLayout: FC<MainLayoutProps> = ({
     <Flex direction="col" className="h-screen min-w-[768px] overflow-x-auto overflow-y-hidden">
       {/* AppBar - Fixed at top */}
       <AppBar
-        sessionTitle={currentConversation?.title || 'New Session'}
+        sessionTitle={currentConversation?.title}
         isAuthenticated={isAuthenticated}
         authRequired={authRequired}
         user={user}

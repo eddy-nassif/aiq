@@ -40,7 +40,9 @@ import {
   clearAllDeepResearchSessions,
 } from './lib/deep-research-session-storage'
 import { isUnavailableDeepResearchJobError } from './lib/deep-research-errors'
-import { hasActiveDeepResearchJob } from './lib/session-activity'
+import { hasActiveDeepResearchJob, hasNoUserChatMessages } from './lib/session-activity'
+import { discardSessionDocumentsResources } from '@/features/documents/discard-session-resources'
+import { useDocumentsStore } from '@/features/documents/store'
 import {
   logStorageWrite,
   logQuotaExceededPruning,
@@ -103,6 +105,25 @@ const createResilientStorage = (): PersistStorage<PersistedChatState> | undefine
     getItem: async (name: string): Promise<PersistedChatStorageValue | null> => {
       const raw = await base.getItem(name)
       if (!raw) return null
+
+      // Strip connection error messages — they are transient and should not
+      // survive page reloads. Persisting them causes the UI to show a permanent
+      // "failed to connect" state that only clears when the user wipes cache.
+      const stripConnectionErrors = (conversations: Conversation[]) =>
+        conversations.map((c) => ({
+          ...c,
+          messages: c.messages.filter(
+            (m) =>
+              !(
+                m.messageType === 'error' &&
+                m.errorData?.errorCode?.startsWith('connection.')
+              )
+          ),
+        }))
+
+      if (raw.state.conversations) {
+        raw.state.conversations = stripConnectionErrors(raw.state.conversations)
+      }
 
       // Reconstruct currentConversation from the ID stored by prunePersistedChatState.
       const storedId = raw.state.currentConversation as unknown as string | null
@@ -206,7 +227,7 @@ const initialState: ChatState = {
 const createNewConversation = (userId: string): Conversation => ({
   id: `s_${uuidv4().replace(/-/g, '_')}`, // Milvus: letters, numbers, underscores only (no hyphens)
   userId,
-  title: 'New Session',
+  title: '',
   messages: [],
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -255,6 +276,35 @@ const restoreConversationDataSources = (conversation: Conversation): void => {
 
   const defaultIds = getDefaultEnabledDataSourceIds()
   layoutStore.setEnabledDataSources(defaultIds)
+}
+
+/**
+ * When leaving an upload-only session (no user chat), remove it and tear down
+ * its document collection. Skips if uploads/ingestion are still in flight or
+ * the session is waiting on HITL / active deep research.
+ */
+const maybeDiscardAbandonedUploadOnlySession = (
+  get: () => ChatStore,
+  sessionId: string | null | undefined
+): void => {
+  if (!sessionId) return
+
+  const { conversations, currentUserId, pendingInteraction, currentConversation } = get()
+  if (pendingInteraction && currentConversation?.id === sessionId) return
+
+  const conv = conversations.find((c) => c.id === sessionId && c.userId === currentUserId)
+  if (!conv) return
+  if (!hasNoUserChatMessages(conv.messages)) return
+  if (hasActiveDeepResearchJob(conv.messages)) return
+
+  const docsInFlight = useDocumentsStore.getState().trackedFiles.some(
+    (f) =>
+      f.collectionName === sessionId && (f.status === 'uploading' || f.status === 'ingesting')
+  )
+  if (docsInFlight) return
+
+  discardSessionDocumentsResources(sessionId)
+  get().deleteConversation(sessionId)
 }
 
 export const useChatStore = create<ChatStore>()(
@@ -377,10 +427,12 @@ export const useChatStore = create<ChatStore>()(
         },
 
         startNewSessionDraft: () => {
-          const { currentUserId } = get()
+          const { currentUserId, currentConversation } = get()
           if (!currentUserId) {
             throw new Error('Cannot start session draft without authenticated user')
           }
+
+          maybeDiscardAbandonedUploadOnlySession(get, currentConversation?.id)
 
           const layoutState = useLayoutStore.getState()
           const defaultEnabledDataSourceIds = getDefaultEnabledDataSourceIds()
@@ -472,6 +524,17 @@ export const useChatStore = create<ChatStore>()(
         },
 
         selectConversation: (conversationId: string) => {
+          const beforeLeave = get()
+          const leavingId =
+            beforeLeave.currentConversation?.id &&
+            beforeLeave.currentConversation.id !== conversationId
+              ? beforeLeave.currentConversation.id
+              : undefined
+
+          if (leavingId) {
+            maybeDiscardAbandonedUploadOnlySession(get, leavingId)
+          }
+
           const {
             conversations,
             currentUserId,
@@ -567,9 +630,9 @@ export const useChatStore = create<ChatStore>()(
             enabledDataSources: metadata?.enabledDataSources,
             messageFiles: metadata?.messageFiles,
           }
-
-          // Update title if this is the first message
-          const shouldUpdateTitle = conversation.messages.length === 0
+          // Update title on first user message (ignore file_upload_status and other system messages)
+          const hasUserMessage = conversation.messages.some((m) => m.messageType === 'user')
+          const shouldUpdateTitle = !hasUserMessage
 
           const updatedConversation: Conversation = {
             ...conversation,
