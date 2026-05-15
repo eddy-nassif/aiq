@@ -8,10 +8,18 @@ This mode starts only the API server. It does not start the Next.js UI, and it d
 
 ```bash
 python3 --version
+uv --version
 test -d .venv && echo "venv=present" || echo "venv=missing"
+if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "port 8000 is already in use"
+else
+  echo "port 8000 is free"
+fi
 ```
 
 If `.venv` is missing, use the repository's documented setup flow before starting services. Ask before installing dependencies.
+
+If port `8000` is already in use, choose another free port with `--port` and hand that URL to `aiq-research`.
 
 ## Start
 

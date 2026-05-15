@@ -34,6 +34,15 @@ Run this only for deployment modes that intentionally start the browser UI:
 curl -sf "http://localhost:${FRONTEND_PORT:-3000}" >/dev/null && echo "frontend=reachable"
 ```
 
+## PostgreSQL When Using Docker Compose
+
+Run this only for Docker Compose deployments. It is not required for local process or CLI modes unless the selected config explicitly uses a local PostgreSQL service.
+
+```bash
+docker exec aiq-postgres pg_isready -U aiq -d aiq_jobs
+docker exec aiq-postgres pg_isready -U aiq -d aiq_checkpoints
+```
+
 ## Async Agent API
 
 Use the installed `aiq-research` helper from the skill checkout when available:
@@ -59,5 +68,6 @@ When validation passes, tell the user:
 
 - backend URL
 - frontend URL when applicable, or that the UI was intentionally not started
+- PostgreSQL readiness when using Docker Compose
 - whether `aiq-research` can use its default `AIQ_SERVER_URL`
 - the exact `export AIQ_SERVER_URL=...` command when not using the default backend URL

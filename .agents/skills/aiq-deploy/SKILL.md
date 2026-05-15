@@ -71,12 +71,12 @@ Map the user's choice as follows:
 
 | Choice | Route | Default Config |
 |---|---|---|
-| Skill backend | `references/docker-compose.md` backend-only, or `references/skill-backend.md` for local process | `configs/config_web_default_llamaindex.yml` |
+| Skill backend | `references/docker-compose.md` backend-only by default; `references/skill-backend.md` only for local process or no-container runs | `configs/config_web_default_llamaindex.yml` |
 | CLI | `references/cli.md` | `configs/config_cli_default.yml` |
-| UI | `references/local-web.md` or full Docker Compose | `configs/config_web_default_llamaindex.yml` |
+| UI | Full Docker Compose by default for durable local deployment; `references/local-web.md` only for quick development runs | `configs/config_web_default_llamaindex.yml` |
 | Custom config | Use the experimental `aiq-configure` skill when installed, then return here after a config exists | Generated or selected config |
 
-If the user asks for AI-Q as an Agent Skill, use `skill-backend.md` when running locally without containers. If the user asks for a quick dev run, use `local-web.md` instead of Docker Compose. If they explicitly ask for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
+For external users, Docker Compose is the default durable local deployment after the user chooses Skill backend or UI. Use local process paths only when the user asks for a quick development run, asks to avoid containers, or Docker Compose is unavailable and the user accepts that fallback. If the user explicitly asks for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
 
 ## Required Workflow
 

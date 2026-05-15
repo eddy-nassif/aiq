@@ -23,6 +23,16 @@ docker logs aiq-blueprint-ui --tail 100
 docker logs aiq-postgres --tail 100
 ```
 
+Local process:
+
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+curl -sf http://localhost:8000/health
+```
+
+For `start_as_skill.sh` and `start_e2e.sh`, inspect the terminal that launched the script. These paths run foreground processes and do not create Docker logs.
+
 Kubernetes:
 
 ```bash

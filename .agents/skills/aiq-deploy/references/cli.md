@@ -6,6 +6,7 @@ Use this path when the user wants an interactive terminal research assistant rat
 
 ```bash
 python3 --version
+uv --version
 test -d .venv && echo "venv=present" || echo "venv=missing"
 ```
 

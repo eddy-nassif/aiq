@@ -10,16 +10,21 @@ For Agent Skill backend use, start only `aiq-agent`; Docker Compose will also st
 docker --version
 docker compose version
 docker info >/dev/null
-for port in 3000 8000 5432; do
+for port in 8000 5432; do
   if lsof -nP -iTCP:$port -sTCP:LISTEN >/dev/null 2>&1; then
     echo "port $port is already in use"
   else
     echo "port $port is free"
   fi
 done
+if lsof -nP -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "port 3000 is already in use; required only for browser UI mode"
+else
+  echo "port 3000 is free"
+fi
 ```
 
-If port `8000` is already in use, set `PORT=8100` or another free port in `deploy/.env` before starting Compose.
+If port `8000` is already in use, set `PORT=8100` or another free port in `deploy/.env` before starting Compose. If port `5432` is in use, resolve the PostgreSQL conflict before starting this Compose stack. If port `3000` is in use, it only blocks full browser UI mode; backend-only Agent Skill mode can still run.
 
 ## Start For Agent Skill Backend
 
@@ -53,7 +58,21 @@ cd deploy/compose
 docker compose --env-file ../.env -f docker-compose.yaml up -d
 ```
 
-## Runtime Checks
+## Runtime Checks For Agent Skill Backend
+
+Run these when only `aiq-agent` and its dependencies were started:
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E 'aiq-agent|aiq-postgres'
+docker exec aiq-postgres pg_isready -U aiq -d aiq_jobs
+docker exec aiq-postgres pg_isready -U aiq -d aiq_checkpoints
+```
+
+Do not require `aiq-blueprint-ui` for backend-only Agent Skill mode.
+
+## Runtime Checks For Full Browser UI
+
+Run these when the user requested the browser UI:
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E 'aiq-agent|aiq-blueprint-ui|aiq-postgres'
