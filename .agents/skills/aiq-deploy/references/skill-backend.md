@@ -26,6 +26,10 @@ The default Agent Skill backend path starts:
 - frontend UI: not started
 - debug console: disabled
 
+## Authentication
+
+Assume `REQUIRE_AUTH=false` for the public Agent Skill backend path. If the user requires authentication, they must enable and configure it for their own environment before using `aiq-research`.
+
 ## Verify
 
 After startup, read `validation.md` and run the basic backend and async-agent validation checks. Do not require the frontend check for this mode.

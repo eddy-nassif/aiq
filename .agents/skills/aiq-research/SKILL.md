@@ -20,6 +20,7 @@ Use this skill to call a locally running AIQ Blueprint server through the helper
 
 - The AIQ server is running locally at `http://localhost:8000`.
 - Override the base URL only for another local deployment by setting `AIQ_SERVER_URL`.
+- If the server is not reachable and `aiq-deploy` is installed, hand off to `aiq-deploy` to start and validate a backend, then resume the original research request.
 
 ## Use Cases
 
@@ -77,10 +78,11 @@ python3 $SKILL_DIR/scripts/aiq.py research_poll <job_id>
 ## Workflow
 
 1. Run `health` first if you are unsure whether the local AIQ server is running.
-2. Run `chat "<query>"` by passing the user's exact query for routed chat/research.
-3. If the response contains `{"status": "deep_research_running", "job_id": "..."}`, run `research_poll <job_id>`.
-4. If polling is interrupted, resume with `status <job_id>`, `report <job_id>`, or `research_poll <job_id>`.
-5. Present returned reports with citations intact. Do not truncate source URLs.
+2. If `health` fails, preserve the user's original query and use `aiq-deploy` to start a Skill backend. After `aiq-deploy` returns a verified `AIQ_SERVER_URL`, rerun `health`.
+3. Run `chat "<query>"` by passing the user's exact query for routed chat/research.
+4. If the response contains `{"status": "deep_research_running", "job_id": "..."}`, run `research_poll <job_id>`.
+5. If polling is interrupted, resume with `status <job_id>`, `report <job_id>`, or `research_poll <job_id>`.
+6. Present returned reports with citations intact. Do not truncate source URLs.
 
 ### Presenting the report
 
@@ -151,7 +153,7 @@ python3 /skills/aiq/aiq-research/scripts/aiq.py research_poll 12345678-1234-1234
 
 | Error | Likely Cause | Action |
 |---|---|---|
-| Connection refused | Local server is not running | Start the AIQ API server locally |
-| HTTP 401 or 403 | Local server rejected the request | Restart local server with `REQUIRE_AUTH=false` |
+| Connection refused | Local server is not running | Use `aiq-deploy` to start and validate a Skill backend, then retry with the same query |
+| HTTP 401 or 403 | Local server rejected the request | The public helper does not manage auth. Use the default `REQUIRE_AUTH=false`, or configure auth for the user's environment before retrying |
 | Job remains running | Deep research is asynchronous | Continue with `research_poll <job_id>` |
 | Job failed | Server-side workflow failed | Show the returned status/error; do not retry automatically |

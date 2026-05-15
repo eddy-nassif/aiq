@@ -42,6 +42,7 @@ for key in [
     "AIQ_CHECKPOINT_DB",
     "RAG_SERVER_URL",
     "RAG_INGEST_URL",
+    "REQUIRE_AUTH",
 ]:
     print(f"{key}={present(key)}")
 
@@ -50,5 +51,7 @@ PY
 ```
 
 Core hosted-model usage requires `NVIDIA_API_KEY`. Web research requires at least one configured search provider key for the selected config.
+
+For the public Agent Skill backend path, assume `REQUIRE_AUTH=false`. If the user requires authentication, they must configure it to match their environment before using `aiq-research`.
 
 If required values are missing, stop and ask the user to fill `deploy/.env`. Do not ask them to paste secrets into chat.

@@ -32,14 +32,37 @@ cd deploy/compose
 docker compose --env-file ../.env -f docker-compose.yaml down
 ```
 
-## Restart Docker Compose
+## Restart Docker Compose Backend Only
+
+Use this when AI-Q was started for Agent Skill backend use:
+
+```bash
+cd deploy/compose
+BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml up -d --build aiq-agent
+```
+
+## Restart Docker Compose Full UI
+
+Use this only when the user wants the browser UI:
 
 ```bash
 cd deploy/compose
 docker compose --env-file ../.env -f docker-compose.yaml up -d
 ```
 
-## Rebuild Docker Compose
+## Rebuild Docker Compose Backend Only
+
+Use this when AI-Q was started for Agent Skill backend use:
+
+```bash
+cd deploy/compose
+BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml build --no-cache aiq-agent
+BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml up -d aiq-agent
+```
+
+## Rebuild Docker Compose Full UI
+
+Use this only when the user wants the browser UI:
 
 ```bash
 cd deploy/compose

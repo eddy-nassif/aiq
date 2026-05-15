@@ -58,7 +58,7 @@ How do you want to run AI-Q?
 1. Skill backend - backend-only service for aiq-research w/o browser UI.
 2. CLI - interactive terminal AI-Q.
 3. UI - browser AI-Q app with backend and frontend.
-4. Custom config - create or choose a non-default custom AI-Q config before deployment.
+4. Custom config - experimentally create or choose a non-default AI-Q config before deployment.
 ```
 
 Wait for the user's answer before starting services.
@@ -74,14 +74,7 @@ Map the user's choice as follows:
 | Skill backend | `references/docker-compose.md` backend-only, or `references/skill-backend.md` for local process | `configs/config_web_default_llamaindex.yml` |
 | CLI | `references/cli.md` | `configs/config_cli_default.yml` |
 | UI | `references/local-web.md` or full Docker Compose | `configs/config_web_default_llamaindex.yml` |
-| Custom config | Route to the future `aiq-configure` skill, then return here after a config exists | Generated or selected config |
-
-If the user only says "deploy AIQ", use this default path:
-
-1. Read `references/locate-or-clone.md`.
-2. Read `references/env-and-secrets.md`.
-3. Read `references/docker-compose.md`.
-4. Read `references/validation.md`.
+| Custom config | Use the experimental `aiq-configure` skill when installed, then return here after a config exists | Generated or selected config |
 
 If the user asks for AI-Q as an Agent Skill, use `skill-backend.md` when running locally without containers. If the user asks for a quick dev run, use `local-web.md` instead of Docker Compose. If they explicitly ask for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
 

@@ -25,8 +25,8 @@ If port `8000` is already in use, set `PORT=8100` or another free port in `deplo
 
 ```bash
 cd deploy/compose
-docker compose --env-file ../.env -f docker-compose.yaml config --quiet
-docker compose --env-file ../.env -f docker-compose.yaml up -d --build aiq-agent
+BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml config --quiet
+BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml up -d --build aiq-agent
 ```
 
 Use pre-built images only when the user asks for registry images or faster startup:
@@ -35,6 +35,8 @@ Use pre-built images only when the user asks for registry images or faster start
 cd deploy/compose
 docker compose --env-file ../.env -f docker-compose.yaml up -d aiq-agent
 ```
+
+The release build target excludes the CLI and debug UI. Keep this path backend-only unless the user asks for the browser UI.
 
 ## Start Full Browser UI
 
