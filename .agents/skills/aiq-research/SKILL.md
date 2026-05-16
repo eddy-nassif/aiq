@@ -156,4 +156,5 @@ python3 /skills/aiq/aiq-research/scripts/aiq.py research_poll 12345678-1234-1234
 | Connection refused | Local server is not running | Use `aiq-deploy` to start and validate a Skill backend, then retry with the same query |
 | HTTP 401 or 403 | Local server rejected the request | The public helper does not manage auth. Use the default `REQUIRE_AUTH=false`, or configure auth for the user's environment before retrying |
 | Job remains running | Deep research is asynchronous | Continue with `research_poll <job_id>` |
+| Poll output shows `running`, but a report is returned or `cancel` says the job is already `success` | The job reached a terminal state while the local polling output was still showing prior status lines | Treat `has_report: true` or `job_status.status: success` as complete. Fetch the report with `report <job_id>` instead of cancelling or continuing to poll |
 | Job failed | Server-side workflow failed | Show the returned status/error; do not retry automatically |
