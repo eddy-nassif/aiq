@@ -12,6 +12,8 @@ find deploy/helm -maxdepth 4 -name Chart.yaml -print
 
 Inspect the available chart and values files before acting. Do not guess namespace, image registry, secret names, ingress, or storage values.
 
+If the user asks for a non-default AI-Q workflow config, read `configs.md` before editing values. Helm values use `CONFIG_FILE` for in-image configs; external custom config-file mounting depends on chart support for ConfigMaps and volume mounts in the target release.
+
 ## Deployment Rules
 
 - Ask only for missing cluster-specific choices.

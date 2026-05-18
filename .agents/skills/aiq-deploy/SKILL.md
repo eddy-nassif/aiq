@@ -1,6 +1,6 @@
 ---
 name: aiq-deploy
-description: Deploy, verify, troubleshoot, or stop a local or self-hosted NVIDIA AI-Q Blueprint server for external users. Use when asked to install AIQ, clone AIQ, start AI-Q, run the UI/backend, deploy with Docker Compose or Helm, check health, inspect logs, rebuild, stop services, or prepare a running AI-Q server for the aiq-research skill.
+description: Use when asked to install AIQ, clone AIQ, choose an AI-Q workflow config, start AI-Q, run the UI/backend, deploy with Docker Compose or Helm, check health, inspect logs, rebuild, stop services, or prepare a local or self-hosted AI-Q server for aiq-research.
 license: Apache-2.0
 compatibility: Claude Code, OpenCode, Codex, and Agent Skills-compatible tools. Requires access to the AI-Q repository and the runtime selected by the user.
 metadata:
@@ -38,6 +38,7 @@ Match the user request, then read the referenced file before acting:
 |---|---|
 | No AI-Q checkout exists, install AIQ, clone AIQ, locate repo | `references/locate-or-clone.md` |
 | Configure environment, check API keys, inspect `.env` | `references/env-and-secrets.md` |
+| Choose an AI-Q workflow config, understand config files, set `BACKEND_CONFIG` or `CONFIG_FILE` | `references/configs.md` |
 | Backend-only local server for `aiq-research`, AIQ as an Agent Skill | `references/skill-backend.md` |
 | Terminal assistant, CLI-only run, no web UI | `references/cli.md` |
 | Quick local development run, start UI/backend without containers | `references/local-web.md` |
@@ -58,7 +59,7 @@ How do you want to run AI-Q?
 1. Skill backend - backend-only service for aiq-research w/o browser UI.
 2. CLI - interactive terminal AI-Q.
 3. UI - browser AI-Q app with backend and frontend.
-4. Custom config - experimentally create or choose a non-default AI-Q config before deployment.
+4. Config selection - choose an existing AI-Q config or review advanced customization docs before deployment.
 ```
 
 Wait for the user's answer before starting services.
@@ -74,9 +75,9 @@ Map the user's choice as follows:
 | Skill backend | `references/docker-compose.md` backend-only by default; `references/skill-backend.md` only for local process or no-container runs | `configs/config_web_default_llamaindex.yml` |
 | CLI | `references/cli.md` | `configs/config_cli_default.yml` |
 | UI | Full Docker Compose by default for durable local deployment; `references/local-web.md` only for quick development runs | `configs/config_web_default_llamaindex.yml` |
-| Custom config | Use the experimental `aiq-configure` skill when installed, then return here after a config exists | Generated or selected config |
+| Config selection | `references/configs.md`, then return to the selected deployment route | Existing config path |
 
-For external users, Docker Compose is the default durable local deployment after the user chooses Skill backend or UI. Use local process paths only when the user asks for a quick development run, asks to avoid containers, or Docker Compose is unavailable and the user accepts that fallback. If the user explicitly asks for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
+For external users, Docker Compose is the default durable local deployment after the user chooses Skill backend or UI. Use local process paths only when the user asks for a quick development run, asks to avoid containers, or Docker Compose is unavailable and the user accepts that fallback. If the user asks which config to use, read `configs.md` and select an existing config before deployment. If they explicitly ask for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
 
 ## Required Workflow
 
@@ -84,10 +85,11 @@ For external users, Docker Compose is the default durable local deployment after
 2. Confirm the expected repository files exist.
 3. Create `deploy/.env` from `deploy/.env.example` only when missing.
 4. If the deployment mode is ambiguous, ask the Deployment Mode Selection question.
-5. Check runtime prerequisites and required environment variables for the selected deployment path. Never print secret values.
-6. Start the selected deployment path.
-7. Run basic validation from `references/validation.md`.
-8. Tell the user the verified `AIQ_SERVER_URL` for `aiq-research`.
+5. If using a non-default config, confirm the config path with `references/configs.md`.
+6. Check runtime prerequisites and required environment variables for the selected deployment path. Never print secret values.
+7. Start the selected deployment path.
+8. Run basic validation from `references/validation.md`.
+9. Tell the user the verified `AIQ_SERVER_URL` for `aiq-research`.
 
 ## Handoff Contract
 
