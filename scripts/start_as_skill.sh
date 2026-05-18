@@ -56,7 +56,21 @@ if [ ! -f "$PROJECT_ROOT/$CONFIG_FILE" ]; then
     exit 1
 fi
 
-if ! grep -q "front_end:" "$PROJECT_ROOT/$CONFIG_FILE" 2>/dev/null; then
+if ! python3 - "$PROJECT_ROOT/$CONFIG_FILE" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+for line in config_path.read_text().splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if re.match(r"front_end\s*:", stripped):
+        sys.exit(0)
+sys.exit(1)
+PY
+then
     echo ""
     echo "Error: Config file '$CONFIG_FILE' does not have front_end configured."
     echo "Agent Skill mode requires an API-enabled config such as configs/config_web_default_llamaindex.yml."
@@ -80,6 +94,14 @@ export AIQ_DEV_ENV=skill
 export AIQ_ENABLE_DEBUG=false
 export PYTHONWARNINGS="${PYTHONWARNINGS:-ignore}"
 
+DISPLAY_HOST="$HOST"
+if [[ "$DISPLAY_HOST" == "0.0.0.0" || "$DISPLAY_HOST" == "::" ]]; then
+    DISPLAY_HOST="localhost"
+elif [[ "$DISPLAY_HOST" == *:* && "$DISPLAY_HOST" != \[*\] ]]; then
+    DISPLAY_HOST="[$DISPLAY_HOST]"
+fi
+SKILL_SERVER_URL="http://$DISPLAY_HOST:$PORT"
+
 source "$VENV_DIR/bin/activate"
 
 if ! python -c "import nat" 2>/dev/null; then
@@ -93,8 +115,9 @@ echo "  AI-Q Blueprint - Agent Skill Backend"
 echo "============================================"
 echo ""
 echo "Config:      $CONFIG_FILE"
-echo "API Server:  http://localhost:$PORT"
-echo "Skill URL:   AIQ_SERVER_URL=http://localhost:$PORT"
+echo "Bind Host:   $HOST"
+echo "API Server:  $SKILL_SERVER_URL"
+echo "Skill URL:   AIQ_SERVER_URL=$SKILL_SERVER_URL"
 echo "Debug UI:    disabled"
 echo ""
 echo "Starting server..."

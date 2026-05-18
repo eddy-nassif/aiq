@@ -45,8 +45,9 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir uv \
     && uv python install 3.13 \
-    && ln -sf "$(uv python find 3.13)" /usr/local/bin/python \
-    && ln -sf "$(uv python find 3.13)" /usr/local/bin/python3
+    && UV_PYTHON_BIN="$(uv python find 3.13)" \
+    && ln -sf "$UV_PYTHON_BIN" /usr/local/bin/python \
+    && ln -sf "$UV_PYTHON_BIN" /usr/local/bin/python3
 
 RUN uv venv /app/.venv --python /usr/local/bin/python
 
