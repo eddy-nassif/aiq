@@ -48,8 +48,8 @@ docker exec aiq-postgres pg_isready -U aiq -d aiq_checkpoints
 Use the installed `aiq-research` helper from the skill checkout when available:
 
 ```bash
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py health
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py agents
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py health
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py agents
 ```
 
 ## Shallow End-To-End Check
@@ -57,7 +57,7 @@ AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq
 Run a shallow `/chat` check when required model/search credentials are present. If credentials are missing, report that deploy validation reached infrastructure/API readiness but could not prove model-backed response generation.
 
 ```bash
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py chat "Briefly confirm AI-Q is responding."
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py chat "Briefly confirm AI-Q is responding."
 ```
 
 Do not run deep research as part of basic deploy validation. Deep research belongs to `aiq-research` when requested, and broader integration validation belongs to `end-to-end-validation.md`.

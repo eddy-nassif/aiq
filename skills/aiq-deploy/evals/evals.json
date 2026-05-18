@@ -1,0 +1,90 @@
+[
+  {
+    "id": "aiq-deploy-001-ambiguous-install-asks-mode",
+    "question": "I want to install AI-Q.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent treats this as an ambiguous deployment request and asks how the user wants to run AI-Q before starting services. The choices are Skill backend, CLI, UI, and Custom. The agent does not silently choose a default path or start Docker, Helm, local web, or CLI services before the user chooses.",
+    "expected_behavior": [
+      "Routes to aiq-deploy, not aiq-research",
+      "Asks the deployment mode selection question",
+      "Includes Skill backend, CLI, UI, and Custom as choices",
+      "Does not start services before the user answers",
+      "Does not ask the user to paste secrets into chat"
+    ]
+  },
+  {
+    "id": "aiq-deploy-002-skill-backend-docker-compose",
+    "question": "Deploy AI-Q as a Skill backend with Docker Compose so aiq-research can use it.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent follows the Docker Compose Skill backend path. It locates or clones the AI-Q repo, creates deploy/.env from deploy/.env.example only if missing, checks secret presence without printing values, normalizes non-secret Skill backend runtime values, starts only aiq-agent and required dependencies with BUILD_TARGET=release, validates backend health/PostgreSQL/async agents, and returns the verified AIQ_SERVER_URL. It does not start or require the browser UI.",
+    "expected_behavior": [
+      "Locates or clones the AI-Q repository before running deployment commands",
+      "Creates deploy/.env only when it is missing",
+      "Checks required secret presence without printing secret values",
+      "Normalizes APP_ENV=production and AIQ_DEV_ENV=skill for Skill backend mode",
+      "Preserves an existing REQUIRE_AUTH value and only defaults it to false when missing",
+      "Uses BUILD_TARGET=release for the Docker Compose backend build",
+      "Starts aiq-agent and required dependencies without requiring the frontend",
+      "Runs basic validation and reports AIQ_SERVER_URL"
+    ]
+  },
+  {
+    "id": "aiq-deploy-003-ui-deployment-keeps-ui-scope",
+    "question": "Start the AI-Q UI locally.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent routes to a UI deployment path, confirms required Python, uv, Node/npm, Docker or local runtime prerequisites depending on the selected path, starts both backend and frontend, validates backend health and frontend reachability, and reports both URLs. It does not use the backend-only Skill path unless the user changes the request.",
+    "expected_behavior": [
+      "Routes to aiq-deploy",
+      "Recognizes UI as a browser app request",
+      "Checks frontend prerequisites or Docker Compose availability",
+      "Starts a deployment path that includes frontend and backend",
+      "Validates backend health and frontend reachability",
+      "Reports backend and frontend URLs"
+    ]
+  },
+  {
+    "id": "aiq-deploy-004-custom-config-boundary",
+    "question": "Deploy AI-Q with a custom config for a more advanced workflow.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent uses the config reference to explain and choose among existing AI-Q config files. If no existing config matches, it stops and explains the customization gap instead of inventing arbitrary YAML. It does not write secrets into config files, and it points advanced customization work to the repository docs.",
+    "expected_behavior": [
+      "Routes to aiq-deploy",
+      "Loads the config reference before selecting a config",
+      "Explains existing config options relevant to the request",
+      "Does not generate arbitrary custom YAML as an automatic deploy step",
+      "Does not write secrets into YAML",
+      "Returns to the selected deployment route after config selection"
+    ]
+  },
+  {
+    "id": "aiq-deploy-005-safe-shutdown",
+    "question": "Stop AI-Q, but do not delete my local data.",
+    "expected_skill": "aiq-deploy",
+    "expected_script": null,
+    "ground_truth": "The agent follows the shutdown path and chooses a non-destructive stop command. For Docker Compose it uses docker compose down without -v. For local non-Docker processes it identifies the AI-Q/NAT process before stopping it. The agent asks before destructive cleanup such as deleting volumes or using kill -9.",
+    "expected_behavior": [
+      "Routes to aiq-deploy",
+      "Uses the shutdown reference",
+      "Does not run docker compose down -v",
+      "Asks before destructive cleanup",
+      "For local processes, verifies the process is AI-Q/NAT before killing it"
+    ]
+  },
+  {
+    "id": "aiq-deploy-006-negative-research-request",
+    "question": "Please create a short deep research report on Nvidia's cuda-x and how the different libraries relate to one another.",
+    "expected_skill": "aiq-research",
+    "expected_script": "scripts/aiq.py",
+    "ground_truth": "This is a research-shaped request, not an install or deployment request. The deploy skill should not take over unless aiq-research determines that no compatible backend is reachable and hands off to aiq-deploy to start a Skill backend.",
+    "expected_behavior": [
+      "Does not route directly to aiq-deploy for the initial request",
+      "Routes to aiq-research first",
+      "Only uses aiq-deploy if the research backend is missing or incompatible",
+      "Preserves the original research query through any deploy handoff"
+    ]
+  }
+]

@@ -55,14 +55,14 @@ Use the `aiq-research` helper for API operations when available:
 ```bash
 AIQ_SERVER_URL="${AIQ_SERVER_URL:-http://localhost:8000}"
 
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py health
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py agents
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py health
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py agents
 ```
 
 The agent list must include `deep_researcher`. Then submit and poll an explicit deep research job:
 
 ```bash
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py research \
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py research \
   "Please create a short deep research report on Nvidia's cuda-x and how the different libraries relate to one another." \
   deep_researcher
 ```
@@ -70,15 +70,15 @@ AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq
 If the helper returns a `job_id` or polling is interrupted, keep the job ID in the validation summary and inspect status/state/report:
 
 ```bash
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py status "$JOB_ID"
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py state "$JOB_ID"
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py report "$JOB_ID"
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py status "$JOB_ID"
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py state "$JOB_ID"
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py report "$JOB_ID"
 ```
 
 Use SSE streaming only when debugging event delivery:
 
 ```bash
-AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py stream "$JOB_ID"
+AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 skills/aiq-research/scripts/aiq.py stream "$JOB_ID"
 ```
 
 ## Pass Criteria

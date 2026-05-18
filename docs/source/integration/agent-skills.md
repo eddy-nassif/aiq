@@ -10,14 +10,20 @@ AI-Q includes portable Agent Skills for coding harnesses that support skill-styl
 - `aiq-deploy` helps an assistant clone or locate AI-Q, choose an existing workflow config, deploy locally or in self-hosted environments, verify basic system health, optionally run deep research completion validation, troubleshoot, rebuild, and stop services.
 - `aiq-research` lets an assistant call a running local or self-hosted AI-Q Blueprint server for routed `/chat` requests and async deep research job lifecycle operations.
 
-The packaged skills live at:
+The canonical packaged skills live at:
 
 ```text
-.agents/skills/aiq-deploy/
-.agents/skills/aiq-research/
+skills/aiq-deploy/
+skills/aiq-research/
 ```
 
 Each installed skill directory must contain `SKILL.md` at its root. The deploy skill keeps detailed guidance under `references/` so agents only load the path-specific material they need.
+
+For harnesses that expect repository-local Agent Skills under `.agents/skills`, this repository keeps a compatibility symlink:
+
+```text
+.agents/skills -> ../skills
+```
 
 ## Recommended Flow
 
@@ -78,24 +84,24 @@ Use the repo-local instructions below when developing AI-Q itself, validating ch
 Claude Code supports repo-local skills under `.claude/skills/`. This repository keeps those paths as compatibility symlinks:
 
 ```text
-.claude/skills/aiq-deploy -> ../../.agents/skills/aiq-deploy
-.claude/skills/aiq-research -> ../../.agents/skills/aiq-research
+.claude/skills/aiq-deploy -> ../../skills/aiq-deploy
+.claude/skills/aiq-research -> ../../skills/aiq-research
 ```
 
 To recreate the repo-local install manually:
 
 ```bash
 mkdir -p .claude/skills
-ln -s ../../.agents/skills/aiq-deploy .claude/skills/aiq-deploy
-ln -s ../../.agents/skills/aiq-research .claude/skills/aiq-research
+ln -s ../../skills/aiq-deploy .claude/skills/aiq-deploy
+ln -s ../../skills/aiq-research .claude/skills/aiq-research
 ```
 
 For a user-level install:
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R .agents/skills/aiq-deploy ~/.claude/skills/aiq-deploy
-cp -R .agents/skills/aiq-research ~/.claude/skills/aiq-research
+cp -R skills/aiq-deploy ~/.claude/skills/aiq-deploy
+cp -R skills/aiq-research ~/.claude/skills/aiq-research
 ```
 
 ## Codex
@@ -115,8 +121,8 @@ Example:
 
 ```bash
 mkdir -p <codex-skills-dir>
-cp -R .agents/skills/aiq-deploy <codex-skills-dir>/aiq-deploy
-cp -R .agents/skills/aiq-research <codex-skills-dir>/aiq-research
+cp -R skills/aiq-deploy <codex-skills-dir>/aiq-deploy
+cp -R skills/aiq-research <codex-skills-dir>/aiq-research
 ```
 
 Replace `<codex-skills-dir>` with the skills directory configured for your Codex environment.
@@ -129,8 +135,8 @@ Install with:
 
 ```bash
 mkdir -p ~/.config/opencode/skills
-cp -R .agents/skills/aiq-deploy ~/.config/opencode/skills/aiq-deploy
-cp -R .agents/skills/aiq-research ~/.config/opencode/skills/aiq-research
+cp -R skills/aiq-deploy ~/.config/opencode/skills/aiq-deploy
+cp -R skills/aiq-research ~/.config/opencode/skills/aiq-research
 ```
 
 Restart OpenCode or start a new session after installation.

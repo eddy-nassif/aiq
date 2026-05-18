@@ -171,9 +171,9 @@ python3 $SKILL_DIR/scripts/aiq.py cancel <job_id>
 ## Examples
 
 ```bash
-python3 /skills/aiq/aiq-research/scripts/aiq.py health
-python3 /skills/aiq/aiq-research/scripts/aiq.py chat "Compare local AIQ deep research with a standard web search workflow"
-python3 /skills/aiq/aiq-research/scripts/aiq.py research_poll 12345678-1234-1234-1234-123456789abc
+python3 $SKILL_DIR/scripts/aiq.py health
+python3 $SKILL_DIR/scripts/aiq.py chat "Compare local AIQ deep research with a standard web search workflow"
+python3 $SKILL_DIR/scripts/aiq.py research_poll 12345678-1234-1234-1234-123456789abc
 ```
 
 ## Environment Variables
