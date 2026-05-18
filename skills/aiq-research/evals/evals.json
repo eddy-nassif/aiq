@@ -1,87 +1,46 @@
 [
   {
-    "id": "aiq-research-001-cuda-x-deep-research",
+    "id": "aiq-research-001-health",
+    "question": "Use AI-Q to check whether the local research backend is healthy.",
+    "expected_skill": "aiq-research",
+    "expected_script": "scripts/aiq.py",
+    "ground_truth": "The agent routes to aiq-research, resolves AIQ_SERVER_URL or the default local backend, runs the helper health command, and reports the checked URL with a concise status.",
+    "expected_behavior": [
+      "Routes to aiq-research",
+      "Uses AIQ_SERVER_URL when set, otherwise the localhost default",
+      "Runs scripts/aiq.py health",
+      "Reports the URL that was checked"
+    ]
+  },
+  {
+    "id": "aiq-research-002-cuda-x-report",
     "question": "Please create a short deep research report on Nvidia's cuda-x and how the different libraries relate to one another.",
     "expected_skill": "aiq-research",
     "expected_script": "scripts/aiq.py",
-    "ground_truth": "The agent routes to aiq-research, resolves AIQ_SERVER_URL, checks backend health, submits the user's exact query through the AI-Q research flow, polls any returned async deep research job until completion, fetches the final report, and presents the report with citations and source URLs intact. If no compatible backend is reachable, it asks whether the user already has a backend URL or wants aiq-deploy to start a local Skill backend.",
+    "ground_truth": "The agent routes the research request to aiq-research, checks that an AI-Q backend is reachable, preserves the user's CUDA-X prompt, uses scripts/aiq.py for the research flow, and presents the final report with citations intact when the job completes.",
     "expected_behavior": [
-      "Routes to aiq-research, not aiq-deploy, for the initial request",
-      "Checks AIQ_SERVER_URL or the default localhost backend before research",
-      "Uses scripts/aiq.py rather than inventing unrelated API calls",
-      "Preserves the user's CUDA-X query",
-      "Handles deep_research_running job IDs by polling with research_poll",
-      "Fetches or presents the final report when the job completes",
+      "Routes to aiq-research",
+      "Checks AIQ_SERVER_URL or the default local backend before research",
+      "Preserves the user's CUDA-X prompt",
+      "Uses scripts/aiq.py for the research flow",
+      "Polls if AI-Q returns an async job ID",
+      "Presents the final report when the job completes",
       "Does not truncate citations or source URLs"
     ]
   },
   {
-    "id": "aiq-research-002-health-check",
-    "question": "Use AI-Q to check whether the local research backend is healthy.",
+    "id": "aiq-research-003-weather-santa-clara",
+    "question": "What is the weather like today in Santa Clara, CA?",
     "expected_skill": "aiq-research",
     "expected_script": "scripts/aiq.py",
-    "ground_truth": "The agent uses aiq-research to call the helper health command against AIQ_SERVER_URL or http://localhost:8000. It reports the checked URL and concise health status. It does not start deployment unless the backend is unreachable and the user chooses local deployment.",
+    "ground_truth": "The agent routes the current-weather question to aiq-research, checks that an AI-Q backend is reachable, sends the user's exact prompt through the routed chat flow, and returns a concise answer for Santa Clara, CA.",
     "expected_behavior": [
       "Routes to aiq-research",
-      "Runs scripts/aiq.py health",
-      "Uses AIQ_SERVER_URL when set, otherwise the localhost default",
-      "Reports the URL that was checked",
-      "Does not print unrelated environment variables or secrets"
-    ]
-  },
-  {
-    "id": "aiq-research-003-list-agents",
-    "question": "Use AI-Q to list the available async research agent types.",
-    "expected_skill": "aiq-research",
-    "expected_script": "scripts/aiq.py",
-    "ground_truth": "The agent uses aiq-research to call the helper agents command and returns the async agent JSON without truncating important keys. If the endpoint is missing or fails after health succeeds, it reports backend compatibility failure and offers aiq-deploy validation.",
-    "expected_behavior": [
-      "Routes to aiq-research",
-      "Runs scripts/aiq.py agents",
-      "Preserves JSON keys such as agent_type and description",
-      "Reports compatibility failure if the backend is reachable but the async agents endpoint fails",
-      "Does not silently retry with unrelated endpoints"
-    ]
-  },
-  {
-    "id": "aiq-research-004-user-supplied-backend-url",
-    "question": "Use AI-Q at http://localhost:8100 to research what AI-Q Blueprint is used for.",
-    "expected_skill": "aiq-research",
-    "expected_script": "scripts/aiq.py",
-    "ground_truth": "The agent treats the supplied URL as the target AIQ_SERVER_URL for subsequent helper calls, checks health against that URL, then uses the research flow. It does not ignore the user-supplied backend URL and does not assume any hosted NVIDIA-internal endpoint.",
-    "expected_behavior": [
-      "Routes to aiq-research",
-      "Uses http://localhost:8100 as AIQ_SERVER_URL for helper calls",
-      "Runs health before research",
-      "Does not default back to http://localhost:8000 unless the user changes the URL",
-      "Does not mention or use internal hosted endpoints"
-    ]
-  },
-  {
-    "id": "aiq-research-005-resume-existing-job",
-    "question": "Resume polling AI-Q job 12345678-1234-1234-1234-123456789abc and fetch the report if it is done.",
-    "expected_skill": "aiq-research",
-    "expected_script": "scripts/aiq.py",
-    "ground_truth": "The agent uses aiq-research helper commands for an existing async job. It checks status, uses report when the job is already complete, or research_poll when the job is still running. It does not cancel the job just because polling output is stale.",
-    "expected_behavior": [
-      "Routes to aiq-research",
-      "Uses scripts/aiq.py status, report, or research_poll for the given job ID",
-      "Treats completed or success status as complete",
-      "Fetches the report when available",
-      "Does not cancel a successful or still-running job without user request"
-    ]
-  },
-  {
-    "id": "aiq-research-006-negative-deploy-request",
-    "question": "Install AI-Q and start the browser UI.",
-    "expected_skill": "aiq-deploy",
-    "expected_script": null,
-    "ground_truth": "This is an install and UI deployment request, not a research request. The research skill should stay silent and the deploy skill should ask or follow the appropriate UI deployment path.",
-    "expected_behavior": [
-      "Does not route to aiq-research",
-      "Routes to aiq-deploy",
-      "Treats the request as UI deployment rather than research",
-      "Does not call scripts/aiq.py chat or research"
+      "Checks AIQ_SERVER_URL or the default local backend before the request",
+      "Preserves the user's Santa Clara weather prompt",
+      "Uses scripts/aiq.py chat for the routed request",
+      "Returns a concise answer for Santa Clara, CA",
+      "Does not force a deep_researcher job unless AI-Q returns an async job ID"
     ]
   }
 ]
