@@ -1,6 +1,6 @@
 ---
 name: aiq-research
-description: Use when calling a locally running NVIDIA AI-Q Blueprint server for routed chat, async deep research jobs, status checks, reports, or event-store artifacts.
+description: Use when the user asks for deep research, AIQ research, research with AI-Q, or to use AI-Q on a question, unless they are asking to install, deploy, start, stop, or troubleshoot AI-Q infrastructure.
 license: Apache-2.0
 compatibility: Claude Code, OpenCode, Codex, and Agent Skills-compatible tools. Requires Python 3.10+ and access to a running local AI-Q Blueprint server.
 metadata:
@@ -16,11 +16,24 @@ allowed-tools: Read Bash
 
 Use this skill to call a locally running AIQ Blueprint server through the helper script at `scripts/aiq.py`.
 
+## Intent Boundary
+
+Use this skill for research-shaped requests, including:
+
+- "deep research on ..."
+- "AIQ research ..."
+- "research ..."
+- "use AI-Q to answer ..."
+- "ask AI-Q about ..."
+
+Do not use this skill for install, deploy, start, stop, UI, CLI, Docker, Helm, or troubleshooting requests. Those belong to `aiq-deploy`.
+
 ## Assumptions
 
 - The AIQ server is running locally at `http://localhost:8000`.
 - Override the base URL only for another local deployment by setting `AIQ_SERVER_URL`.
-- If the server is not reachable and `aiq-deploy` is installed, hand off to `aiq-deploy` to start and validate a backend, then resume the original research request.
+- For research-shaped requests, first check whether a research-compatible AI-Q Skill backend is reachable with `health`.
+- If the server is not reachable and `aiq-deploy` is installed, hand off to `aiq-deploy` to start and validate the Skill backend, then resume the original research request.
 
 ## Use Cases
 
@@ -77,7 +90,7 @@ python3 $SKILL_DIR/scripts/aiq.py research_poll <job_id>
 
 ## Workflow
 
-1. Run `health` first if you are unsure whether the local AIQ server is running.
+1. Run `health` first to check whether the local AIQ Skill backend is running.
 2. If `health` fails, preserve the user's original query and use `aiq-deploy` to start a Skill backend. After `aiq-deploy` returns a verified `AIQ_SERVER_URL`, rerun `health`.
 3. Run `chat "<query>"` by passing the user's exact query for routed chat/research.
 4. If the response contains `{"status": "deep_research_running", "job_id": "..."}`, run `research_poll <job_id>`.

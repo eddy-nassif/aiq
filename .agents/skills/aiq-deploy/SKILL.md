@@ -1,6 +1,6 @@
 ---
 name: aiq-deploy
-description: Use when asked to install AIQ, clone AIQ, choose an AI-Q workflow config, start AI-Q, run the UI/backend, deploy with Docker Compose or Helm, check health, inspect logs, rebuild, stop services, or prepare a local or self-hosted AI-Q server for aiq-research.
+description: Use when asked to install AIQ, deploy AIQ, install deep research, clone AIQ, start or stop AI-Q infrastructure, run the UI/backend, deploy with Docker Compose or Helm, choose an AI-Q workflow config, check health, inspect logs, rebuild, or prepare a local or self-hosted AI-Q server for aiq-research.
 license: Apache-2.0
 compatibility: Claude Code, OpenCode, Codex, and Agent Skills-compatible tools. Requires access to the AI-Q repository and the runtime selected by the user.
 metadata:
@@ -59,7 +59,7 @@ How do you want to run AI-Q?
 1. Skill backend - backend-only service for aiq-research w/o browser UI.
 2. CLI - interactive terminal AI-Q.
 3. UI - browser AI-Q app with backend and frontend.
-4. Config selection - choose an existing AI-Q config or review advanced customization docs before deployment.
+4. Custom - choose an existing AI-Q config or review advanced customization docs before deployment.
 ```
 
 Wait for the user's answer before starting services.
@@ -75,7 +75,7 @@ Map the user's choice as follows:
 | Skill backend | `references/docker-compose.md` backend-only by default; `references/skill-backend.md` only for local process or no-container runs | `configs/config_web_default_llamaindex.yml` |
 | CLI | `references/cli.md` | `configs/config_cli_default.yml` |
 | UI | Full Docker Compose by default for durable local deployment; `references/local-web.md` only for quick development runs | `configs/config_web_default_llamaindex.yml` |
-| Config selection | `references/configs.md`, then return to the selected deployment route | Existing config path |
+| Custom | `references/configs.md`, then return to the selected deployment route | Existing config path |
 
 For external users, Docker Compose is the default durable local deployment after the user chooses Skill backend or UI. Use local process paths only when the user asks for a quick development run, asks to avoid containers, or Docker Compose is unavailable and the user accepts that fallback. If the user asks which config to use, read `configs.md` and select an existing config before deployment. If they explicitly ask for a terminal-only assistant, use `cli.md`. If they explicitly ask for Kubernetes or Helm, use `kubernetes-helm.md`.
 

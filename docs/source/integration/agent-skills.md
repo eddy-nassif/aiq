@@ -25,12 +25,14 @@ Each installed skill directory must contain `SKILL.md` at its root. The deploy s
 
 Use the skills together rather than blending their responsibilities:
 
-1. Use `aiq-deploy` to get AI-Q running.
-2. If the user asks which workflow config to use, let `aiq-deploy` read `references/configs.md` and choose an existing repository config before deployment.
-3. Use `aiq-deploy` validation checks to confirm the backend and async-agent API are reachable. Confirm the UI only when that deployment mode intentionally starts it.
-4. Hand the verified `AIQ_SERVER_URL` to `aiq-research`.
-5. Use `aiq-research` for routed chat, async research, polling, report retrieval, streaming, and cancellation.
-6. Use `aiq-evaluation` only for future research-system validation workflows once those profiles are defined.
+1. Use `aiq-research` for research-shaped requests such as "deep research", "AIQ research", "research", or "use AI-Q to answer". It checks whether a local research-compatible Skill backend is reachable.
+2. If the backend is not reachable, let `aiq-research` hand off the original request to `aiq-deploy` so it can start and validate the Skill backend.
+3. Use `aiq-deploy` directly for install/deploy/setup requests such as "install AIQ", "deploy AIQ", or "install deep research".
+4. If the user asks which workflow config to use, let `aiq-deploy` read `references/configs.md` and choose an existing repository config before deployment.
+5. Use `aiq-deploy` validation checks to confirm the backend and async-agent API are reachable. Confirm the UI only when that deployment mode intentionally starts it.
+6. Hand the verified `AIQ_SERVER_URL` to `aiq-research`.
+7. Use `aiq-research` for routed chat, async research, polling, report retrieval, streaming, and cancellation.
+8. Use `aiq-evaluation` only for future research-system validation workflows once those profiles are defined.
 
 For local non-container use, the deploy skill should prefer the backend-only Agent Skill entry point:
 
@@ -42,11 +44,14 @@ This starts the AI-Q API backend required by `aiq-research` without starting the
 
 ## Example Invocations
 
-After the skills are installed, users can ask their coding harness for AI-Q actions in natural language. These prompts should route to `aiq-deploy` unless they are explicitly asking to run research against an already healthy backend:
+After the skills are installed, users can ask their coding harness for AI-Q actions in natural language. Research-shaped prompts route to `aiq-research`; install, deploy, run, stop, UI, CLI, Docker, Helm, and troubleshooting prompts route to `aiq-deploy`:
 
 | User Prompt | Expected Route |
 |---|---|
-| "deploy AI-Q" | `aiq-deploy` chooses the default deployment path, validates the backend, and returns `AIQ_SERVER_URL`. |
+| "deep research on the Blackwell launch" | `aiq-research` checks whether the local Skill backend is reachable, then uses routed `/chat` and async polling as needed. |
+| "AIQ research this topic" | `aiq-research` treats the request as research intent, not install intent. |
+| "deploy AI-Q" | `aiq-deploy` asks which deployment mode the user wants, then validates the selected path and returns `AIQ_SERVER_URL`. |
+| "install deep research" | `aiq-deploy` asks which AI-Q deployment mode the user wants before starting services. |
 | "clone AIQ and run it" | `aiq-deploy` locates or clones `NVIDIA-AI-Blueprints/aiq`, checks required environment values, then starts the selected default deployment. |
 | "start the AI-Q UI" | `aiq-deploy` starts a deployment mode that includes the browser UI, such as local E2E or full Docker Compose. |
 | "run AI-Q with Docker Compose" | `aiq-deploy` follows the Docker Compose path. For Agent Skill backend use, it should start `aiq-agent` and dependencies without the frontend unless the user asks for UI. |
