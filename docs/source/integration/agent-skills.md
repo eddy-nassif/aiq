@@ -7,19 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 
 AI-Q includes portable Agent Skills for coding harnesses that support skill-style instructions and helper scripts.
 
-- `aiq-deploy` helps an assistant clone or locate AI-Q, choose an existing workflow config, deploy locally or in self-hosted environments, verify basic system health, troubleshoot, rebuild, and stop services.
+- `aiq-deploy` helps an assistant clone or locate AI-Q, choose an existing workflow config, deploy locally or in self-hosted environments, verify basic system health, optionally run end-to-end integration validation, troubleshoot, rebuild, and stop services.
 - `aiq-research` lets an assistant call a running local or self-hosted AI-Q Blueprint server for routed `/chat` requests and async deep research job lifecycle operations.
-- `aiq-evaluation` is a placeholder surface for future research-system validation workflows. It is for checking whether source access, install/runtime, model/search provider, or orchestration failures are causing research workflows to fail. It is not for subjective report-quality scoring.
 
 The packaged skills live at:
 
 ```text
 .agents/skills/aiq-deploy/
 .agents/skills/aiq-research/
-.agents/skills/aiq-evaluation/
 ```
 
-Each installed skill directory must contain `SKILL.md` at its root. The deploy skill keeps path-specific guidance under `.agents/skills/aiq-deploy/references/` so agents only load the deployment mode they need.
+Each installed skill directory must contain `SKILL.md` at its root. The deploy skill keeps detailed guidance under `references/` so agents only load the path-specific material they need.
 
 ## Recommended Flow
 
@@ -32,7 +30,8 @@ Use the skills together rather than blending their responsibilities:
 5. Use `aiq-deploy` validation checks to confirm the backend and async-agent API are reachable. Confirm the UI only when that deployment mode intentionally starts it.
 6. Hand the verified `AIQ_SERVER_URL` to `aiq-research`.
 7. Use `aiq-research` for routed chat, async research, polling, report retrieval, streaming, and cancellation.
-8. Use `aiq-evaluation` only for future research-system validation workflows once those profiles are defined.
+8. After deployment validation, ask whether the user wants to run optional end-to-end validation now or skip validation and try AI-Q themselves.
+9. Use `aiq-deploy` end-to-end validation only when the user confirms, asks for fuller integration validation, release signoff, or diagnosis beyond basic deploy health.
 
 For local non-container use, the deploy skill should prefer the backend-only Agent Skill entry point:
 
@@ -65,7 +64,14 @@ After the skills are installed, users can ask their coding harness for AI-Q acti
 - Python 3.10 or newer.
 - For `aiq-deploy`: access to this repository or permission to clone `https://github.com/NVIDIA-AI-Blueprints/aiq`, plus the selected runtime such as Docker Compose, Node/npm for local web mode, or kubectl/Helm for Kubernetes mode.
 - For `aiq-research`: a local or self-hosted AI-Q Blueprint server, usually at `http://localhost:8000`. Set `AIQ_SERVER_URL` only when using a different local or self-hosted server URL.
-- For `aiq-evaluation`: a deployed AI-Q server and stable validation inputs. The skill is currently a stub.
+
+## Install From the NVIDIA Skills Catalog
+
+The AI-Q repository is the source location for these skills. If you only want to use AI-Q as Agent Skills and do not need the full AI-Q source checkout, install the AI-Q skill set from the [NVIDIA Agent Skills catalog](https://github.com/NVIDIA/skills).
+
+Install the AI-Q skills together so deployment and research handoffs are available in the same harness session.
+
+Use the repo-local instructions below when developing AI-Q itself, validating changes before publication, or using a harness that does not support the catalog install path.
 
 ## Claude Code
 
@@ -74,7 +80,6 @@ Claude Code supports repo-local skills under `.claude/skills/`. This repository 
 ```text
 .claude/skills/aiq-deploy -> ../../.agents/skills/aiq-deploy
 .claude/skills/aiq-research -> ../../.agents/skills/aiq-research
-.claude/skills/aiq-evaluation -> ../../.agents/skills/aiq-evaluation
 ```
 
 To recreate the repo-local install manually:
@@ -83,7 +88,6 @@ To recreate the repo-local install manually:
 mkdir -p .claude/skills
 ln -s ../../.agents/skills/aiq-deploy .claude/skills/aiq-deploy
 ln -s ../../.agents/skills/aiq-research .claude/skills/aiq-research
-ln -s ../../.agents/skills/aiq-evaluation .claude/skills/aiq-evaluation
 ```
 
 For a user-level install:
@@ -92,7 +96,6 @@ For a user-level install:
 mkdir -p ~/.claude/skills
 cp -R .agents/skills/aiq-deploy ~/.claude/skills/aiq-deploy
 cp -R .agents/skills/aiq-research ~/.claude/skills/aiq-research
-cp -R .agents/skills/aiq-evaluation ~/.claude/skills/aiq-evaluation
 ```
 
 ## Codex
@@ -106,7 +109,6 @@ Generic install shape:
 <codex-skills-dir>/aiq-deploy/references/
 <codex-skills-dir>/aiq-research/SKILL.md
 <codex-skills-dir>/aiq-research/scripts/aiq.py
-<codex-skills-dir>/aiq-evaluation/SKILL.md
 ```
 
 Example:
@@ -115,7 +117,6 @@ Example:
 mkdir -p <codex-skills-dir>
 cp -R .agents/skills/aiq-deploy <codex-skills-dir>/aiq-deploy
 cp -R .agents/skills/aiq-research <codex-skills-dir>/aiq-research
-cp -R .agents/skills/aiq-evaluation <codex-skills-dir>/aiq-evaluation
 ```
 
 Replace `<codex-skills-dir>` with the skills directory configured for your Codex environment.
@@ -130,7 +131,6 @@ Install with:
 mkdir -p ~/.config/opencode/skills
 cp -R .agents/skills/aiq-deploy ~/.config/opencode/skills/aiq-deploy
 cp -R .agents/skills/aiq-research ~/.config/opencode/skills/aiq-research
-cp -R .agents/skills/aiq-evaluation ~/.config/opencode/skills/aiq-evaluation
 ```
 
 Restart OpenCode or start a new session after installation.
@@ -143,7 +143,6 @@ From the parent directory containing the installed skills, run:
 test -f aiq-deploy/SKILL.md
 test -d aiq-deploy/references
 python3 aiq-research/scripts/aiq.py
-test -f aiq-evaluation/SKILL.md
 ```
 
 Expected `aiq-research/scripts/aiq.py` output starts with:

@@ -45,7 +45,8 @@ Match the user request, then read the referenced file before acting:
 | Default durable local deployment, Docker Compose, containers, PostgreSQL | `references/docker-compose.md` |
 | Kubernetes, Helm, cluster deployment | `references/kubernetes-helm.md` |
 | Foundational RAG / FRAG integration | `references/frag.md` |
-| Health checks, end-to-end smoke checks, handoff to `aiq-research` | `references/validation.md` |
+| Basic health checks, shallow smoke checks, handoff to `aiq-research` | `references/validation.md` |
+| Optional end-to-end validation, deep research integration test, source coverage check | `references/end-to-end-validation.md` |
 | Logs, unhealthy services, port conflicts, config failures | `references/troubleshooting.md` |
 | Stop services, restart, rebuild, safe cleanup | `references/shutdown.md` |
 
@@ -90,6 +91,7 @@ For external users, Docker Compose is the default durable local deployment after
 7. Start the selected deployment path.
 8. Run basic validation from `references/validation.md`.
 9. Tell the user the verified `AIQ_SERVER_URL` for `aiq-research`.
+10. Ask whether they want to run optional end-to-end validation now to verify deeper research-system behavior, or skip and try the deployment themselves.
 
 ## Handoff Contract
 
@@ -105,4 +107,4 @@ If the backend runs elsewhere, tell the user to set:
 export AIQ_SERVER_URL="http://localhost:<PORT>"
 ```
 
-Do not continue into deep research unless the user asks for it. This skill's success criterion is a deployed and validated server, not report generation quality.
+Do not continue into deep research or end-to-end validation unless the user asks for it or confirms the post-deploy validation prompt. This skill's success criterion is a deployed and basically validated server, not report generation quality.

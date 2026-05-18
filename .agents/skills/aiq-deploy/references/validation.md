@@ -1,6 +1,6 @@
 # Basic Validation
 
-These checks confirm the deployed AI-Q system is reachable and minimally usable. They are not report-quality evaluation.
+These checks confirm the deployed AI-Q system is reachable and minimally usable. They are not report-quality scoring.
 
 ## Determine Server URL
 
@@ -60,7 +60,11 @@ Run a shallow `/chat` check when required model/search credentials are present. 
 AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq.py chat "Briefly confirm AI-Q is responding."
 ```
 
-Do not run deep research as part of basic deploy validation. Deep research belongs to `aiq-research` when requested, and broader research-system validation belongs to the future `aiq-evaluation` skill.
+Do not run deep research as part of basic deploy validation. Deep research belongs to `aiq-research` when requested, and broader integration validation belongs to `end-to-end-validation.md`.
+
+## Optional End-To-End Validation
+
+Basic deploy validation does not prove every research dependency is healthy. It confirms that services are reachable and, when credentials are present, that a shallow model-backed request can run. Use `end-to-end-validation.md` for fuller integration validation, including direct provider endpoint checks, deep research, source accounting, file upload, or RAG validation.
 
 ## Handoff
 
@@ -71,3 +75,12 @@ When validation passes, tell the user:
 - PostgreSQL readiness when using Docker Compose
 - whether `aiq-research` can use its default `AIQ_SERVER_URL`
 - the exact `export AIQ_SERVER_URL=...` command when not using the default backend URL
+- whether only basic deploy validation was run or end-to-end validation also verified deeper research-system behavior
+
+Then ask:
+
+```text
+Basic deployment validation passed. Would you like me to run end-to-end validation now to verify that deep research works end to end? This commonly takes 7-20 minutes and may use substantial model/search quota. Otherwise, you can skip validation and try AI-Q yourself.
+```
+
+Only start end-to-end validation if the user confirms.
