@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 AI-Q includes portable Agent Skills for coding harnesses that support skill-style instructions and helper scripts.
 
-- `aiq-deploy` helps an assistant clone or locate AI-Q, choose an existing workflow config, deploy locally or in self-hosted environments, verify basic system health, optionally run end-to-end integration validation, troubleshoot, rebuild, and stop services.
+- `aiq-deploy` helps an assistant clone or locate AI-Q, choose an existing workflow config, deploy locally or in self-hosted environments, verify basic system health, optionally run deep research completion validation, troubleshoot, rebuild, and stop services.
 - `aiq-research` lets an assistant call a running local or self-hosted AI-Q Blueprint server for routed `/chat` requests and async deep research job lifecycle operations.
 
 The packaged skills live at:
@@ -30,8 +30,8 @@ Use the skills together rather than blending their responsibilities:
 5. Use `aiq-deploy` validation checks to confirm the backend and async-agent API are reachable. Confirm the UI only when that deployment mode intentionally starts it.
 6. Hand the verified `AIQ_SERVER_URL` to `aiq-research`.
 7. Use `aiq-research` for routed chat, async research, polling, report retrieval, streaming, and cancellation.
-8. After deployment validation, ask whether the user wants to run optional end-to-end validation now or skip validation and try AI-Q themselves.
-9. Use `aiq-deploy` end-to-end validation only when the user confirms, asks for fuller integration validation, release signoff, or diagnosis beyond basic deploy health.
+8. After deployment validation, ask whether the user wants to run optional deep research completion validation now or skip validation and try AI-Q themselves.
+9. Use `aiq-deploy` deep research completion validation only when the user confirms, asks for release signoff, or wants proof that deep research can complete after deployment.
 
 For local non-container use, the deploy skill should prefer the backend-only Agent Skill entry point:
 

@@ -28,6 +28,8 @@ If port `8000` is already in use, set `PORT=8100` or another free port in `deplo
 
 ## Start For Agent Skill Backend
 
+Before starting, read `env-and-secrets.md` and run its Skill backend mode normalization. This sets non-secret values such as `APP_ENV=production` and `AIQ_DEV_ENV=skill`, and it defaults `REQUIRE_AUTH=false` only when not already configured.
+
 ```bash
 cd deploy/compose
 BUILD_TARGET=release docker compose --env-file ../.env -f docker-compose.yaml config --quiet
@@ -44,6 +46,8 @@ docker compose --env-file ../.env -f docker-compose.yaml up -d aiq-agent
 The release build target excludes the CLI and debug UI. Keep this path backend-only unless the user asks for the browser UI.
 
 ## Start Full Browser UI
+
+Before starting, make sure `deploy/.env` is not left in CLI mode. If `AIQ_DEV_ENV=cli` is present from a copied template, change it to a non-CLI value such as `AIQ_DEV_ENV=web`.
 
 ```bash
 cd deploy/compose

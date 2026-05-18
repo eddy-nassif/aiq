@@ -62,9 +62,9 @@ AIQ_SERVER_URL="$AIQ_SERVER_URL" python3 .agents/skills/aiq-research/scripts/aiq
 
 Do not run deep research as part of basic deploy validation. Deep research belongs to `aiq-research` when requested, and broader integration validation belongs to `end-to-end-validation.md`.
 
-## Optional End-To-End Validation
+## Optional Deep Research Completion Validation
 
-Basic deploy validation does not prove every research dependency is healthy. It confirms that services are reachable and, when credentials are present, that a shallow model-backed request can run. Use `end-to-end-validation.md` for fuller integration validation, including direct provider endpoint checks, deep research, source accounting, file upload, or RAG validation.
+Basic deploy validation does not prove that deep research can complete. It confirms that services are reachable and, when credentials are present, that a shallow model-backed request can run. Use `end-to-end-validation.md` for the optional deeper check: submit an explicit `deep_researcher` job, poll it to completion, and fetch the final report.
 
 ## Handoff
 
@@ -75,12 +75,12 @@ When validation passes, tell the user:
 - PostgreSQL readiness when using Docker Compose
 - whether `aiq-research` can use its default `AIQ_SERVER_URL`
 - the exact `export AIQ_SERVER_URL=...` command when not using the default backend URL
-- whether only basic deploy validation was run or end-to-end validation also verified deeper research-system behavior
+- whether only basic deploy validation was run or deep research completion validation also passed
 
 Then ask:
 
 ```text
-Basic deployment validation passed. Would you like me to run end-to-end validation now to verify that deep research works end to end? This commonly takes 7-20 minutes and may use substantial model/search quota. Otherwise, you can skip validation and try AI-Q yourself.
+Basic deployment validation passed. Would you like me to run deep research completion validation now? This submits a `deep_researcher` job and commonly takes 7-20 minutes with substantial model/search quota. Otherwise, you can skip validation and try AI-Q yourself.
 ```
 
-Only start end-to-end validation if the user confirms.
+Only start deep research completion validation if the user confirms.
