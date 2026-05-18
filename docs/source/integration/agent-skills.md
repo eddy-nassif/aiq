@@ -25,8 +25,8 @@ Each installed skill directory must contain `SKILL.md` at its root. The deploy s
 
 Use the skills together rather than blending their responsibilities:
 
-1. Use `aiq-research` for research-shaped requests such as "deep research", "AIQ research", "research", or "use AI-Q to answer". It checks whether a local research-compatible Skill backend is reachable.
-2. If the backend is not reachable, let `aiq-research` hand off the original request to `aiq-deploy` so it can start and validate the Skill backend.
+1. Use `aiq-research` for research-shaped requests such as "deep research", "AIQ research", "research", or "use AI-Q to answer". It checks `AIQ_SERVER_URL` first, then the default local backend.
+2. If no backend is reachable, let `aiq-research` ask whether the user already has an AI-Q backend URL or wants `aiq-deploy` to start and validate a local Skill backend.
 3. Use `aiq-deploy` directly for install/deploy/setup requests such as "install AIQ", "deploy AIQ", or "install deep research".
 4. If the user asks which workflow config to use, let `aiq-deploy` read `references/configs.md` and choose an existing repository config before deployment.
 5. Use `aiq-deploy` validation checks to confirm the backend and async-agent API are reachable. Confirm the UI only when that deployment mode intentionally starts it.
@@ -48,7 +48,7 @@ After the skills are installed, users can ask their coding harness for AI-Q acti
 
 | User Prompt | Expected Route |
 |---|---|
-| "deep research on the Blackwell launch" | `aiq-research` checks whether the local Skill backend is reachable, then uses routed `/chat` and async polling as needed. |
+| "deep research on the Blackwell launch" | `aiq-research` checks `AIQ_SERVER_URL` or the default local Skill backend, then uses routed `/chat` and async polling as needed. |
 | "AIQ research this topic" | `aiq-research` treats the request as research intent, not install intent. |
 | "deploy AI-Q" | `aiq-deploy` asks which deployment mode the user wants, then validates the selected path and returns `AIQ_SERVER_URL`. |
 | "install deep research" | `aiq-deploy` asks which AI-Q deployment mode the user wants before starting services. |
