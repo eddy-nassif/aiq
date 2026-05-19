@@ -1,6 +1,6 @@
 ---
 name: aiq-research
-description: Use when calling a locally running NVIDIA AI-Q Blueprint server for routed chat, async deep research jobs, status checks, reports, or event-store artifacts.
+description: Use when the user asks for deep research, AIQ research, research with AI-Q, or to use AI-Q on a question, unless they are asking to install, deploy, start, stop, or troubleshoot AI-Q infrastructure.
 license: Apache-2.0
 compatibility: Claude Code, OpenCode, Codex, and Agent Skills-compatible tools. Requires Python 3.10+ and access to a running local AI-Q Blueprint server.
 metadata:
@@ -16,10 +16,43 @@ allowed-tools: Read Bash
 
 Use this skill to call a locally running AIQ Blueprint server through the helper script at `scripts/aiq.py`.
 
+## Intent Boundary
+
+Use this skill for research-shaped requests, including:
+
+- "deep research on ..."
+- "AIQ research ..."
+- "research ..."
+- "use AI-Q to answer ..."
+- "ask AI-Q about ..."
+
+Do not use this skill for install, deploy, start, stop, UI, CLI, Docker, Helm, or troubleshooting requests. Those belong to `aiq-deploy`.
+
 ## Assumptions
 
 - The AIQ server is running locally at `http://localhost:8000`.
 - Override the base URL only for another local deployment by setting `AIQ_SERVER_URL`.
+- For research-shaped requests, first check whether a research-compatible AI-Q Skill backend is reachable with `health`.
+- If the server is not reachable and `aiq-deploy` is installed, hand off to `aiq-deploy` to start and validate the Skill backend, then resume the original research request.
+
+## Backend Resolution
+
+Resolve the backend before running research:
+
+1. If `AIQ_SERVER_URL` is set, use it.
+2. Otherwise try the default local backend: `http://localhost:8000`.
+3. Run `health`.
+4. If `health` succeeds, continue with `/chat` and async research checks.
+5. If `health` fails and no explicit `AIQ_SERVER_URL` was set, ask:
+
+```text
+I do not see a reachable local AI-Q backend. Do you already have an AI-Q backend URL you want to use, or should I deploy a local Skill backend?
+```
+
+- If the user provides a URL, set `AIQ_SERVER_URL` for subsequent helper calls and rerun `health`.
+- If the user wants local deployment, hand off to `aiq-deploy` and preserve the original research request.
+- If a reachable backend returns `401` or `403`, stop and explain that this public skill does not manage authentication. Ask the user to use an authenticated AI-Q skill or configure authentication for their environment.
+- If `health` succeeds but `/chat` or `/v1/jobs/async/agents` fails, report that the backend is reachable but not compatible with this public research flow, then offer to run `aiq-deploy` validation.
 
 ## Use Cases
 
@@ -76,11 +109,13 @@ python3 $SKILL_DIR/scripts/aiq.py research_poll <job_id>
 
 ## Workflow
 
-1. Run `health` first if you are unsure whether the local AIQ server is running.
-2. Run `chat "<query>"` by passing the user's exact query for routed chat/research.
-3. If the response contains `{"status": "deep_research_running", "job_id": "..."}`, run `research_poll <job_id>`.
-4. If polling is interrupted, resume with `status <job_id>`, `report <job_id>`, or `research_poll <job_id>`.
-5. Present returned reports with citations intact. Do not truncate source URLs.
+1. Resolve the backend using the Backend Resolution flow.
+2. Run `health` first to check whether the local AIQ Skill backend is running.
+3. If `health` fails after backend resolution, preserve the user's original query and use `aiq-deploy` to start a Skill backend. After `aiq-deploy` returns a verified `AIQ_SERVER_URL`, rerun `health`.
+4. Run `chat "<query>"` by passing the user's exact query for routed chat/research.
+5. If the response contains `{"status": "deep_research_running", "job_id": "..."}`, run `research_poll <job_id>`.
+6. If polling is interrupted, resume with `status <job_id>`, `report <job_id>`, or `research_poll <job_id>`.
+7. Present returned reports with citations intact. Do not truncate source URLs.
 
 ### Presenting the report
 
@@ -136,9 +171,9 @@ python3 $SKILL_DIR/scripts/aiq.py cancel <job_id>
 ## Examples
 
 ```bash
-python3 /skills/aiq/aiq-research/scripts/aiq.py health
-python3 /skills/aiq/aiq-research/scripts/aiq.py chat "Compare local AIQ deep research with a standard web search workflow"
-python3 /skills/aiq/aiq-research/scripts/aiq.py research_poll 12345678-1234-1234-1234-123456789abc
+python3 $SKILL_DIR/scripts/aiq.py health
+python3 $SKILL_DIR/scripts/aiq.py chat "Compare local AIQ deep research with a standard web search workflow"
+python3 $SKILL_DIR/scripts/aiq.py research_poll 12345678-1234-1234-1234-123456789abc
 ```
 
 ## Environment Variables
@@ -151,7 +186,9 @@ python3 /skills/aiq/aiq-research/scripts/aiq.py research_poll 12345678-1234-1234
 
 | Error | Likely Cause | Action |
 |---|---|---|
-| Connection refused | Local server is not running | Start the AIQ API server locally |
-| HTTP 401 or 403 | Local server rejected the request | Restart local server with `REQUIRE_AUTH=false` |
+| Connection refused | No backend is reachable at `AIQ_SERVER_URL` or `http://localhost:8000` | Ask whether the user already has an AI-Q backend URL; otherwise use `aiq-deploy` to start and validate a Skill backend, then retry with the same query |
+| HTTP 401 or 403 | Backend requires authentication | This public helper does not manage auth. Ask the user to use an authenticated AI-Q skill or configure authentication for their environment before retrying |
+| Health succeeds but `/chat` or async agents fail | Backend is reachable but not compatible with this public research flow | Report the compatibility failure and offer to run `aiq-deploy` validation |
 | Job remains running | Deep research is asynchronous | Continue with `research_poll <job_id>` |
+| Poll output shows `running`, but a report is returned or `cancel` says the job is already `success` | The job reached a terminal state while the local polling output was still showing prior status lines | Treat `has_report: true` or `job_status.status: success` as complete. Fetch the report with `report <job_id>` instead of cancelling or continuing to poll |
 | Job failed | Server-side workflow failed | Show the returned status/error; do not retry automatically |
