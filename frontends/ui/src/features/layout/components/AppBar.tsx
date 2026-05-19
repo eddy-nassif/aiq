@@ -5,7 +5,7 @@
  * AppBar Component
  *
  * Top navigation bar with menu toggle, logo, session title,
- * and action buttons (Add Sources, Docs, User Avatar).
+ * and action buttons (Add Sources, User Avatar).
  *
  * Shows different states based on authentication:
  * - Auth disabled: Default User avatar with info tooltip (no sign in/out)
@@ -75,10 +75,6 @@ export const AppBar: FC<AppBarProps> = memo(function AppBar({
       openRightPanel('data-sources')
     }
   }, [isAuthenticated])
-
-  const handleDocsClick = useCallback(() => {
-    window.open('https://github.com/NVIDIA-AI-Blueprints/aiq', '_blank')
-  }, [])
 
   const handleNewSessionClick = useCallback(() => {
     if (!isAuthenticated || isNewSessionDisabled) return
@@ -161,19 +157,6 @@ export const AppBar: FC<AppBarProps> = memo(function AppBar({
             <Flex align="center" gap="1">
               <Globe className="h-4 w-4" />
               <Text kind="label/regular/md">Data Sources</Text>
-            </Flex>
-          </Button>
-          <Button
-            kind="tertiary"
-            size="small"
-            onClick={handleDocsClick}
-            aria-label="Open documentation"
-            title="Open documentation"
-          >
-            <Flex align="center" gap="1">
-              <Book className="h-4 w-4" />
-              <Text kind="label/regular/md">Documentation</Text>
-              <OpenExternal className="h-4 w-4" />
             </Flex>
           </Button>
 
@@ -259,6 +242,8 @@ const APPEARANCE_SEGMENTS: { mode: ThemeMode; label: string }[] = [
   { mode: 'light', label: 'Light' },
 ]
 
+const DOCS_URL = 'https://github.com/NVIDIA-AI-Blueprints/aiq/tree/develop/docs'
+
 const AppearanceThemeControl: FC = () => {
   const theme = useLayoutStore((s) => s.theme)
   const setTheme = useLayoutStore((s) => s.setTheme)
@@ -325,6 +310,29 @@ const AppearanceThemeControl: FC = () => {
   )
 }
 
+const DocumentationSection: FC = () => {
+  return (
+    <Flex direction="col" gap="2">
+      <Text kind="label/regular/sm" className="text-subtle">
+        Documentation
+      </Text>
+      <a
+        href={DOCS_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open GitHub Docs"
+        className="flex w-full items-center justify-between rounded-[var(--radius-md)] px-2 py-2 text-primary transition-colors hover:bg-surface-raised-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus,#76b900)]"
+      >
+        <Flex align="center" gap="2">
+          <Book className="h-4 w-4 shrink-0" />
+          <Text kind="label/regular/sm">GitHub Docs</Text>
+        </Flex>
+        <OpenExternal className="h-4 w-4 shrink-0 text-subtle" />
+      </a>
+    </Flex>
+  )
+}
+
 const UserDropdownContent: FC<UserDropdownContentProps> = ({ user, onSignOut }) => {
   return (
     <Flex direction="col" gap="3" className="min-w-[240px] p-4">
@@ -350,6 +358,13 @@ const UserDropdownContent: FC<UserDropdownContentProps> = ({ user, onSignOut }) 
       <Divider />
 
       <AppearanceThemeControl />
+
+      <Divider />
+
+      <DocumentationSection />
+
+      <Divider />
+
       {/* Sign out button */}
       <Button
         kind="secondary"
@@ -385,10 +400,6 @@ const AuthDisabledContent: FC = () => {
         </Flex>
       </Flex>
 
-      <Divider />
-
-      <AppearanceThemeControl />
-
       {/* Info message */}
       <Flex align="center" gap="2" className="rounded border border-base p-3">
         <Info className="h-4 w-4 shrink-0 text-[var(--text-color-subtle)]" />
@@ -396,6 +407,14 @@ const AuthDisabledContent: FC = () => {
           Authentication Not Configured
         </Text>
       </Flex>
+
+      <Divider />
+
+      <AppearanceThemeControl />
+
+      <Divider />
+
+      <DocumentationSection />
     </Flex>
   )
 }
