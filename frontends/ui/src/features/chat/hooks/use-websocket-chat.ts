@@ -777,7 +777,10 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             // `lastSentOutgoingRef` and silently drop the user's payload
             // (the auth_expired handler couldn't re-buffer it).
             lastSentOutgoingRef.current = pending
-            setLoading(false)
+            // Match each send path's loading contract: chat sends clear the
+            // composer spinner after putting the message on the wire, while
+            // HITL answers keep it visible until the backend processes them.
+            setLoading(pending.kind === 'interaction')
           }
           return
         }

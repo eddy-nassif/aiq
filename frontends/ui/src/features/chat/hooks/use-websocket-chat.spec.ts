@@ -1875,9 +1875,11 @@ describe('useWebSocketChat -- token rotation', () => {
     // Preflight: rotate kicked off, response NOT yet on the wire.
     expect(mockWsClient.sendInteractionResponse).not.toHaveBeenCalled()
     expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
+    mockSetLoading.mockClear()
 
     // Fresh socket connects -> drain dispatches via sendInteractionResponse,
-    // NOT sendMessage.
+    // NOT sendMessage. The HITL loading state should stay active while the
+    // backend processes the answer, matching respondToInteraction.doSend().
     act(() => {
       capturedCallbacks.onConnectionChange?.('connected')
     })
@@ -1887,5 +1889,6 @@ describe('useWebSocketChat -- token rotation', () => {
       'Yes, confirmed'
     )
     expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+    expect(mockSetLoading).toHaveBeenCalledWith(true)
   })
 })
