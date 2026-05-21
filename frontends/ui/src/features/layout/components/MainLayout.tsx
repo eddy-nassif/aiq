@@ -9,7 +9,7 @@
  * - SessionsPanel (left, overlay)
  * - ChatArea + InputArea (center, responsive width)
  * - ResearchPanel (right, pushes content - takes 60% when open)
- * - DataSourcesPanel / SettingsPanel (right, overlay)
+ * - DataSourcesPanel (right, overlay)
  *
  * Handles auth state to show different UI for logged-in vs logged-out users.
  */
@@ -26,7 +26,6 @@ import { ChatArea } from './ChatArea'
 import { InputArea } from './InputArea'
 import { ResearchPanel } from './ResearchPanel'
 import { DataSourcesPanel } from './DataSourcesPanel'
-import { SettingsPanel } from './SettingsPanel'
 import { useChatStore, useDeepResearch, NoSourcesBanner } from '@/features/chat'
 import { hasActiveDeepResearchJob } from '@/features/chat/lib/session-activity'
 import { useLayoutStore } from '../store'
@@ -206,9 +205,6 @@ export const MainLayout: FC<MainLayoutProps> = ({
 
       {/* Data Sources Panel (Right) - Overlay */}
       <DataSourcesPanel />
-
-      {/* Settings Panel (Right) - Overlay */}
-      <SettingsPanel />
     </Flex>
   )
 }

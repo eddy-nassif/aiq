@@ -104,10 +104,6 @@ vi.mock('./DataSourcesPanel', () => ({
   DataSourcesPanel: () => <div data-testid="data-sources-panel">Data Sources Panel</div>,
 }))
 
-vi.mock('./SettingsPanel', () => ({
-  SettingsPanel: () => <div data-testid="settings-panel">Settings Panel</div>,
-}))
-
 import { useChatStore } from '@/features/chat'
 import { useLayoutStore } from '../store'
 
@@ -125,7 +121,6 @@ describe('MainLayout', () => {
     expect(screen.getByTestId('input-area')).toBeInTheDocument()
     expect(screen.getByTestId('research-panel')).toBeInTheDocument()
     expect(screen.getByTestId('data-sources-panel')).toBeInTheDocument()
-    expect(screen.getByTestId('settings-panel')).toBeInTheDocument()
   })
 
   test('passes session title to AppBar', () => {
