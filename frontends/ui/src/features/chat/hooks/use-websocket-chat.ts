@@ -128,6 +128,14 @@ const MAX_CONSECUTIVE_AUTH_EXPIRED = 3
 const MAX_UNACKNOWLEDGED_OUTGOING_REPLAYS = 1
 
 /**
+ * If the browser accepts a WebSocket send but the server never emits any
+ * response frame, `onclose` may also never fire on half-open network paths.
+ * This timeout closes that remaining gap: no backend contact within the
+ * window is treated like an unacknowledged stale send.
+ */
+const UNACKNOWLEDGED_OUTGOING_ACK_TIMEOUT_MS = 15_000
+
+/**
  * Map NAT/backend error codes to frontend ErrorCode for consistent UI display.
  * This provides a generic mapping for any backend error.
  */
@@ -256,6 +264,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
    * on the reconnected socket.
    */
   const unacknowledgedOutgoingRef = useRef<UnacknowledgedOutgoing | null>(null)
+  const unacknowledgedOutgoingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Set by the soft timer when it fires while streaming; consumed by the
@@ -290,7 +299,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
   const rotateSocket = useCallback((reason: string): void => {
     const client = wsClientRef.current
     if (!client) return
-    console.warn(`[WS] Rotating connection before token expiry (${reason})`)
+    console.warn(`[WS] Rotating connection (${reason})`)
     void client.rotate()
   }, [])
 
@@ -404,11 +413,87 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     [authRequired, authError]
   )
 
+  const clearUnacknowledgedOutgoingTimeout = useCallback((): void => {
+    if (unacknowledgedOutgoingTimeoutRef.current) {
+      clearTimeout(unacknowledgedOutgoingTimeoutRef.current)
+      unacknowledgedOutgoingTimeoutRef.current = null
+    }
+  }, [])
+
+  const clearUnacknowledgedOutgoing = useCallback((): void => {
+    unacknowledgedOutgoingRef.current = null
+    clearUnacknowledgedOutgoingTimeout()
+  }, [clearUnacknowledgedOutgoingTimeout])
+
+  const failUnacknowledgedOutgoing = useCallback((): void => {
+    if (currentThinkingStepIdRef.current) {
+      completeThinkingStep(currentThinkingStepIdRef.current)
+      currentThinkingStepIdRef.current = null
+      currentStatusRef.current = null
+    }
+
+    addErrorCard(
+      'connection.failed',
+      'No response received from the server. Please try again.',
+    )
+    setCurrentStatus(null)
+    setStreaming(false)
+    setLoading(false)
+    clearPendingInteraction()
+    lastSentOutgoingRef.current = null
+    pendingOutgoingRef.current = null
+    clearUnacknowledgedOutgoing()
+  }, [
+    addErrorCard,
+    clearPendingInteraction,
+    clearUnacknowledgedOutgoing,
+    completeThinkingStep,
+    setCurrentStatus,
+    setLoading,
+    setStreaming,
+  ])
+
+  const handleUnacknowledgedOutgoingTimeout = useCallback((): void => {
+    const unacknowledged = unacknowledgedOutgoingRef.current
+    if (!unacknowledged) return
+
+    const activeConversationId = useChatStore.getState().currentConversation?.id
+    const sameConversation =
+      !unacknowledged.conversationId ||
+      unacknowledged.conversationId === activeConversationId
+
+    if (!sameConversation) {
+      lastSentOutgoingRef.current = null
+      pendingOutgoingRef.current = null
+      clearUnacknowledgedOutgoing()
+      return
+    }
+
+    if (
+      unacknowledged.retryCount < MAX_UNACKNOWLEDGED_OUTGOING_REPLAYS
+    ) {
+      pendingOutgoingRef.current = {
+        ...unacknowledged.payload,
+        deliveryRetryCount: unacknowledged.retryCount + 1,
+      } as PendingOutgoing
+      clearUnacknowledgedOutgoing()
+      rotateSocket('delivery-timeout')
+      return
+    }
+
+    failUnacknowledgedOutgoing()
+  }, [
+    clearUnacknowledgedOutgoing,
+    failUnacknowledgedOutgoing,
+    rotateSocket,
+  ])
+
   const trackSentOutgoing = useCallback(
     (payload: PendingOutgoing, outboundId: string): void => {
       const retryCount = payload.deliveryRetryCount ?? 0
       const conversationId = useChatStore.getState().currentConversation?.id ?? currentConversationId
 
+      clearUnacknowledgedOutgoingTimeout()
       lastSentOutgoingRef.current = payload
       unacknowledgedOutgoingRef.current = {
         payload,
@@ -417,8 +502,16 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         conversationId,
         retryCount,
       }
+      unacknowledgedOutgoingTimeoutRef.current = setTimeout(
+        handleUnacknowledgedOutgoingTimeout,
+        UNACKNOWLEDGED_OUTGOING_ACK_TIMEOUT_MS,
+      )
     },
-    [currentConversationId]
+    [
+      clearUnacknowledgedOutgoingTimeout,
+      currentConversationId,
+      handleUnacknowledgedOutgoingTimeout,
+    ]
   )
 
   const acknowledgeOutgoingDelivery = useCallback((parentId?: string): void => {
@@ -435,9 +528,9 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       parentId === unacknowledged.ackParentId ||
       parentId === unacknowledged.outboundId
     ) {
-      unacknowledgedOutgoingRef.current = null
+      clearUnacknowledgedOutgoing()
     }
-  }, [])
+  }, [clearUnacknowledgedOutgoing])
 
   const sendOutgoingPayload = useCallback(
     (payload: PendingOutgoing): boolean => {
@@ -761,7 +854,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
             consecutiveAuthExpiredRef.current = 0
             lastSentOutgoingRef.current = null
             pendingOutgoingRef.current = null
-            unacknowledgedOutgoingRef.current = null
+            clearUnacknowledgedOutgoing()
             addErrorCard(
               'auth.session_expired' as ErrorCode,
               'Your session has expired. Please sign in again to continue.',
@@ -778,7 +871,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           if (lastSent) {
             pendingOutgoingRef.current = lastSent
           }
-          unacknowledgedOutgoingRef.current = null
+          clearUnacknowledgedOutgoing()
           rotateSocket('auth_expired')
           return
         }
@@ -803,7 +896,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           // pre-rotation payload behind the user's back.
           lastSentOutgoingRef.current = null
           pendingOutgoingRef.current = null
-          unacknowledgedOutgoingRef.current = null
+          clearUnacknowledgedOutgoing()
           return
         }
 
@@ -833,7 +926,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         // user expects to be re-sent once we've shown them an error card.
         lastSentOutgoingRef.current = null
         pendingOutgoingRef.current = null
-        unacknowledgedOutgoingRef.current = null
+        clearUnacknowledgedOutgoing()
       },
 
       onConnectionChange: (status, context?: ConnectionChangeContext) => {
@@ -885,11 +978,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
                 ...unacknowledged.payload,
                 deliveryRetryCount: unacknowledged.retryCount + 1,
               } as PendingOutgoing
-              unacknowledgedOutgoingRef.current = null
+              clearUnacknowledgedOutgoing()
               return
             }
 
-            unacknowledgedOutgoingRef.current = null
+            clearUnacknowledgedOutgoing()
             lastSentOutgoingRef.current = null
             pendingOutgoingRef.current = null
           }
@@ -933,6 +1026,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     getTransportFailure,
     rotateSocket,
     acknowledgeOutgoingDelivery,
+    clearUnacknowledgedOutgoing,
     sendOutgoingPayload,
   ])
 
@@ -982,7 +1076,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
       }
       pendingOutgoingRef.current = null
       lastSentOutgoingRef.current = null
-      unacknowledgedOutgoingRef.current = null
+      clearUnacknowledgedOutgoing()
       consecutiveAuthExpiredRef.current = 0
       pendingRotationRef.current = false
       currentThinkingStepIdRef.current = null
@@ -993,6 +1087,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
     autoConnect,
     createCallbacks,
     refreshAuthBeforeReconnect,
+    clearUnacknowledgedOutgoing,
     setStreaming,
     setLoading,
     setCurrentStatus,
