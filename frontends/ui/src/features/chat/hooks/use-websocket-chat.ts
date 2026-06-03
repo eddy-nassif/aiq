@@ -133,7 +133,7 @@ const MAX_UNACKNOWLEDGED_OUTGOING_REPLAYS = 1
  * This timeout closes that remaining gap: no backend contact within the
  * window is treated like an unacknowledged stale send.
  */
-const UNACKNOWLEDGED_OUTGOING_ACK_TIMEOUT_MS = 15_000
+const UNACKNOWLEDGED_OUTGOING_ACK_TIMEOUT_MS = 7_000
 
 /**
  * Map NAT/backend error codes to frontend ErrorCode for consistent UI display.

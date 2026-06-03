@@ -487,7 +487,7 @@ describe('useWebSocketChat', () => {
       mockAddErrorCard.mockClear()
 
       act(() => {
-        vi.advanceTimersByTime(15_000)
+        vi.advanceTimersByTime(7_000)
       })
 
       expect(mockWsClient.rotate).toHaveBeenCalledTimes(1)
@@ -531,7 +531,7 @@ describe('useWebSocketChat', () => {
       mockWsClient.rotate.mockClear()
 
       act(() => {
-        vi.advanceTimersByTime(15_000)
+        vi.advanceTimersByTime(7_000)
       })
 
       expect(mockWsClient.rotate).not.toHaveBeenCalled()
@@ -562,7 +562,7 @@ describe('useWebSocketChat', () => {
       mockSetLoading.mockClear()
 
       act(() => {
-        vi.advanceTimersByTime(15_000)
+        vi.advanceTimersByTime(7_000)
       })
 
       expect(mockWsClient.rotate).not.toHaveBeenCalled()
@@ -596,7 +596,7 @@ describe('useWebSocketChat', () => {
       })
 
       act(() => {
-        vi.advanceTimersByTime(15_000)
+        vi.advanceTimersByTime(7_000)
       })
       act(() => {
         capturedCallbacks.onConnectionChange?.('connected')
@@ -609,7 +609,7 @@ describe('useWebSocketChat', () => {
       mockAddErrorCard.mockClear()
 
       act(() => {
-        vi.advanceTimersByTime(15_000)
+        vi.advanceTimersByTime(7_000)
       })
 
       expect(mockWsClient.rotate).not.toHaveBeenCalled()
