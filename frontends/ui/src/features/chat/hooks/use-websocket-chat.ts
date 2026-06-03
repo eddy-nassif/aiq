@@ -720,7 +720,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         }
       },
 
-      onIntermediateStep: (content: NATIntermediateStepContent | string, status: string, parentId?: string) => {
+      onIntermediateStep: (content: NATIntermediateStepContent | string, status: string, _parentId?: string) => {
         // Same as onResponse: any backend-emitted frame on this socket
         // proves the rotated handshake is honoured. Reset the consecutive
         // auth_expired budget.
@@ -735,7 +735,11 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
           console.warn('Ignoring stale intermediate step -- not currently streaming')
           return
         }
-        acknowledgeOutgoingDelivery(parentId)
+        // This is the same signal that makes ChatThinking appear in the UI:
+        // after the streaming stale guard, any intermediate frame proves the
+        // backend received the outbound message even when NAT uses internal
+        // workflow parent IDs that do not match the user-message id.
+        clearUnacknowledgedOutgoing()
 
         // Legacy string-content path: synthesize a generic thinking step.
         if (typeof content === 'string') {

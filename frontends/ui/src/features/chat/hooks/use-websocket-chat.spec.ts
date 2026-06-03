@@ -510,7 +510,7 @@ describe('useWebSocketChat', () => {
     }
   })
 
-  test('does not replay after the backend acknowledges the sent message before the ack timeout', () => {
+  test('does not replay after an accepted intermediate frame with an internal parent id before the ack timeout', () => {
     vi.useFakeTimers()
     try {
       mockWsClient.isConnected.mockReturnValue(true)
@@ -524,7 +524,7 @@ describe('useWebSocketChat', () => {
 
       mockStoreState.isStreaming = true
       act(() => {
-        capturedCallbacks.onIntermediateStep?.('Thinking...', 'in_progress')
+        capturedCallbacks.onIntermediateStep?.('Thinking...', 'in_progress', 'internal-step-id')
       })
 
       mockWsClient.sendMessage.mockClear()
