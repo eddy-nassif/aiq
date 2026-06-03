@@ -192,8 +192,8 @@ const mockWsClient = {
   connect: vi.fn(),
   disconnect: vi.fn(),
   rotate: vi.fn(),
-  sendMessage: vi.fn(),
-  sendInteractionResponse: vi.fn(),
+  sendMessage: vi.fn(() => 'mock-outbound-message-id'),
+  sendInteractionResponse: vi.fn(() => 'mock-outbound-interaction-id'),
   isConnected: vi.fn(() => false),
   updateConversationId: vi.fn(),
 }
@@ -367,6 +367,103 @@ describe('useWebSocketChat', () => {
       'Send during handshake',
       expect.any(Array),
     )
+  })
+
+  test('replays a just-sent message once when the socket drops before any backend frame', () => {
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendMessage
+      .mockReturnValueOnce('outbound-original')
+      .mockReturnValueOnce('outbound-replay')
+
+    const { result } = renderWebSocketHook()
+
+    act(() => {
+      result.current.sendMessage('Need current weather')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith(
+      'Need current weather',
+      expect.any(Array),
+    )
+
+    mockWsClient.sendMessage.mockClear()
+    mockSetStreaming.mockClear()
+    mockSetLoading.mockClear()
+    mockAddErrorCard.mockClear()
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('disconnected')
+    })
+
+    expect(mockSetStreaming).not.toHaveBeenCalledWith(false)
+    expect(mockSetLoading).not.toHaveBeenCalledWith(false)
+    expect(mockAddErrorCard).not.toHaveBeenCalled()
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mockWsClient.sendMessage).toHaveBeenCalledWith(
+      'Need current weather',
+      expect.any(Array),
+    )
+
+    // Once any backend frame arrives, the delivery guard is cleared. A later
+    // disconnect must not replay the same prompt again.
+    mockStoreState.isStreaming = true
+    mockWsClient.sendMessage.mockClear()
+
+    act(() => {
+      capturedCallbacks.onIntermediateStep?.('Thinking...', 'in_progress')
+    })
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('disconnected')
+    })
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  test('does not replay an unacknowledged message more than once', () => {
+    mockWsClient.isConnected.mockReturnValue(true)
+    mockWsClient.sendMessage
+      .mockReturnValueOnce('outbound-original')
+      .mockReturnValueOnce('outbound-replay')
+
+    const { result } = renderWebSocketHook()
+
+    act(() => {
+      result.current.sendMessage('Retry bounded request')
+    })
+
+    mockWsClient.sendMessage.mockClear()
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('disconnected')
+    })
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).toHaveBeenCalledTimes(1)
+
+    mockWsClient.sendMessage.mockClear()
+    mockSetStreaming.mockClear()
+    mockSetLoading.mockClear()
+
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('disconnected')
+    })
+    act(() => {
+      capturedCallbacks.onConnectionChange?.('connected')
+    })
+
+    expect(mockWsClient.sendMessage).not.toHaveBeenCalled()
+    expect(mockSetStreaming).toHaveBeenCalledWith(false)
+    expect(mockSetLoading).toHaveBeenCalledWith(false)
   })
 
   test('sendMessage does not add knowledge_layer when no files uploaded', async () => {
