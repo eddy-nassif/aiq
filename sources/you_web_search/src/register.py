@@ -164,7 +164,7 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
             }
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    "https://api.you.com/v1/search",
+                    "https://ydc-index.io/v1/search",
                     json=payload,
                     headers=headers,
                     timeout=tool_config.crawl_timeout,
