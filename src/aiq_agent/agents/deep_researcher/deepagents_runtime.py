@@ -21,6 +21,7 @@ import logging
 import re
 import shlex
 import threading
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -32,17 +33,21 @@ from deepagents.backends.protocol import EditResult
 from deepagents.backends.protocol import ExecuteResponse
 from deepagents.backends.protocol import FileDownloadResponse
 from deepagents.backends.protocol import FileUploadResponse
+from deepagents.backends.protocol import GlobResult
+from deepagents.backends.protocol import LsResult
 from deepagents.backends.protocol import ReadResult
 from deepagents.backends.protocol import WriteResult
 from deepagents.backends.sandbox import BaseSandbox
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import model_validator
 
 logger = logging.getLogger(__name__)
 
 AGENT_DIR = Path(__file__).parent
 BUILTIN_SKILLS_DIR = AGENT_DIR / "skills"
 BUILTIN_SKILL_SOURCE = "/skills/"
+BUILTIN_SKILL_FILE_PATTERNS = ("**/*.md",)
 SHARED_ROUTE = "/shared/"
 
 
@@ -96,18 +101,106 @@ class _PrefixedStateBackend(StateBackend):
         return result
 
 
-class SkillsConfig(BaseModel):
-    """Configuration for built-in DeepAgents skills."""
+class _RouteAwareCompositeBackend(CompositeBackend):
+    """CompositeBackend that routes absolute virtual glob patterns directly.
 
-    enabled: bool = Field(default=False, description="Enable DeepAgents skills for the orchestrator")
-    sources: tuple[str, ...] = Field(
-        default=(BUILTIN_SKILL_SOURCE,),
-        description="DeepAgents skill source paths. Defaults to the built-in deep researcher skills directory.",
+    DeepAgents' CompositeBackend.glob searches the default backend first when
+    called with the default path, even if the pattern is an absolute routed path
+    such as ``/shared/*.json``. With a sandbox default, that unnecessarily
+    initializes the sandbox. Route these absolute virtual patterns directly to
+    their local state-backed route.
+    """
+
+    def ls(self, path: str) -> LsResult:
+        if path == "/" and isinstance(self.default, BaseSandbox):
+            return self._virtual_root_ls()
+        return super().ls(path)
+
+    async def als(self, path: str) -> LsResult:
+        if path == "/" and isinstance(self.default, BaseSandbox):
+            return self._virtual_root_ls()
+        return await super().als(path)
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        routed = self._route_glob_pattern(pattern, path)
+        if routed is not None:
+            pattern, path = routed
+        return super().glob(pattern, path)
+
+    async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
+        routed = self._route_glob_pattern(pattern, path)
+        if routed is not None:
+            pattern, path = routed
+        return await super().aglob(pattern, path)
+
+    def _route_glob_pattern(self, pattern: str, path: str) -> tuple[str, str] | None:
+        if path != "/":
+            return None
+        for route_prefix, _backend in self.sorted_routes:
+            route_root = route_prefix.rstrip("/")
+            if pattern == route_root:
+                return "/", route_prefix
+            if pattern.startswith(f"{route_root}/"):
+                return pattern[len(route_root) :], route_prefix
+        return None
+
+    def _virtual_root_ls(self) -> LsResult:
+        entries = [
+            {
+                "path": route_prefix,
+                "is_dir": True,
+                "size": 0,
+                "modified_at": "",
+            }
+            for route_prefix, _backend in self.sorted_routes
+        ]
+        entries.sort(key=lambda entry: entry["path"])
+        return LsResult(entries=entries)
+
+
+class SkillsConfig(BaseModel):
+    """Configuration for DeepAgents skills."""
+
+    enabled: bool = Field(default=False, description="Enable DeepAgents skills")
+    agent_sources: dict[str, tuple[str, ...]] = Field(
+        default_factory=dict,
+        description=(
+            "Per-agent skill source overrides keyed by agent name. An empty tuple disables skills for that agent."
+        ),
     )
+    sandbox_required_sources: tuple[str, ...] = Field(
+        default=(),
+        description="Skill source paths that require a sandbox backend when assigned to an agent.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_deprecated_global_sources(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        migrated = dict(data)
+        for key in ("sources", "default_sources"):
+            if key not in migrated:
+                continue
+            migrated.pop(key)
+            message = (
+                f"SkillsConfig.{key} is deprecated and ignored. Configure explicit "
+                "SkillsConfig.agent_sources entries instead."
+            )
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            logger.warning(message)
+        return migrated
 
     @classmethod
     def enabled_builtin(cls) -> SkillsConfig:
-        return cls(enabled=True)
+        return cls(
+            enabled=True,
+            agent_sources={
+                "researcher": (BUILTIN_SKILL_SOURCE,),
+                "writer-agent": (BUILTIN_SKILL_SOURCE,),
+            },
+        )
 
 
 class SandboxConfig(BaseModel):
@@ -143,28 +236,35 @@ class DeepAgentsRuntime:
         sandbox: SandboxConfig | None = None,
         job_id: str | None = None,
     ) -> None:
-        self.skills = skills or SkillsConfig()
-        self.sandbox = sandbox
-        self.job_id = str(job_id) if job_id is not None else str(uuid4())
+        self._skills = skills or SkillsConfig()
+        self._sandbox = sandbox
+        self._job_id = str(job_id) if job_id is not None else str(uuid4())
         self._backend: Any | None = None
 
-    @property
-    def skill_sources(self) -> list[str] | None:
-        if not self.skills.enabled:
+    def skill_sources_for(self, agent_name: str) -> list[str] | None:
+        """Return skill sources for a DeepAgents agent/subagent name."""
+        if not self._skills.enabled:
             return None
-        return list(self.skills.sources)
+        sources = self._skills.agent_sources.get(agent_name)
+        if not sources:
+            return None
+        self._validate_sandbox_required_sources(sources, agent_name)
+        return list(sources)
 
-    @property
-    def builtin_skills_dir(self) -> Path:
-        return BUILTIN_SKILLS_DIR
+    def _validate_sandbox_required_sources(self, sources: tuple[str, ...], agent_name: str) -> None:
+        if self._sandbox is not None or not self._skills.sandbox_required_sources:
+            return
 
-    @property
-    def create_agent_kwargs(self) -> dict[str, Any]:
-        backend = self.backend
-        kwargs: dict[str, Any] = {"backend": backend}
-        if self.skill_sources is not None:
-            kwargs["skills"] = self.skill_sources
-        return kwargs
+        missing = sorted(
+            source
+            for source in sources
+            if any(_source_matches_required(source, required) for required in self._skills.sandbox_required_sources)
+        )
+        if missing:
+            raise ValueError(
+                f"DeepAgents skills for agent '{agent_name}' require a sandbox backend: {missing}. "
+                "Configure sandbox or remove these sources from sandbox_required_sources."
+            )
 
     @property
     def backend(self) -> Any:
@@ -172,10 +272,10 @@ class DeepAgentsRuntime:
         if self._backend is not None:
             return self._backend
 
-        sandbox = self.sandbox
+        sandbox = self._sandbox
         if sandbox is not None:
-            sandbox_backend = _create_sandbox_backend(sandbox, self.job_id)
-            self._backend = CompositeBackend(
+            sandbox_backend = _create_sandbox_backend(sandbox, self._job_id)
+            self._backend = _RouteAwareCompositeBackend(
                 default=sandbox_backend,
                 routes={
                     BUILTIN_SKILL_SOURCE: _PrefixedStateBackend(BUILTIN_SKILL_SOURCE),
@@ -184,7 +284,7 @@ class DeepAgentsRuntime:
             )
             return self._backend
 
-        self._backend = CompositeBackend(
+        self._backend = _RouteAwareCompositeBackend(
             default=StateBackend(),
             routes={
                 BUILTIN_SKILL_SOURCE: _PrefixedStateBackend(BUILTIN_SKILL_SOURCE),
@@ -195,7 +295,7 @@ class DeepAgentsRuntime:
 
     def prepare_state(self, state: Any) -> Any:
         """Preload built-in skills into state when using the StateBackend."""
-        if not self.skills.enabled:
+        if not self._skills.enabled:
             return state
 
         files = dict(getattr(state, "files", None) or {})
@@ -210,15 +310,16 @@ def _collect_builtin_skill_files() -> list[tuple[str, bytes]]:
     if not BUILTIN_SKILLS_DIR.exists():
         return files
 
-    for skill_dir in sorted(BUILTIN_SKILLS_DIR.iterdir()):
-        if not skill_dir.is_dir():
+    file_paths = {
+        path for pattern in BUILTIN_SKILL_FILE_PATTERNS for path in BUILTIN_SKILLS_DIR.glob(pattern) if path.is_file()
+    }
+    for file_path in sorted(file_paths):
+        relative_file_path = file_path.relative_to(BUILTIN_SKILLS_DIR)
+        relative_parts = relative_file_path.parts
+        if any(part.startswith(".") or part == "__pycache__" for part in relative_parts):
             continue
-        if skill_dir.name.startswith(".") or skill_dir.name == "__pycache__":
-            continue
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
-            continue
-        files.append((f"{BUILTIN_SKILL_SOURCE}{skill_dir.name}/SKILL.md", skill_md.read_bytes()))
+        relative_path = relative_file_path.as_posix()
+        files.append((f"{BUILTIN_SKILL_SOURCE}{relative_path}", file_path.read_bytes()))
     return files
 
 
@@ -239,6 +340,16 @@ def _strip_builtin_skill_source(file_path: str) -> str:
     if file_path.startswith(BUILTIN_SKILL_SOURCE):
         return "/" + file_path[len(BUILTIN_SKILL_SOURCE) :].lstrip("/")
     return file_path
+
+
+def _normalize_source_path(source: str) -> str:
+    return "/" + source.strip("/")
+
+
+def _source_matches_required(source: str, required_source: str) -> bool:
+    normalized = _normalize_source_path(source)
+    required = _normalize_source_path(required_source)
+    return normalized == required or normalized.startswith(f"{required}/")
 
 
 def _validate_modal_sandbox_name(job_id: str) -> str:
@@ -268,15 +379,6 @@ class _LazyModalSandboxBackend(BaseSandbox):
         self.sandbox_name = _validate_modal_sandbox_name(job_id)
         self._backend: Any | None = None
         self._lock = threading.Lock()
-
-        try:
-            import langchain_modal  # noqa: F401
-            import modal  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "The Modal sandbox backend requires the `langchain-modal` and `modal` packages. "
-                "Install the updated AIQ dependencies and run `modal setup` before enabling a Modal sandbox."
-            ) from exc
 
     @property
     def id(self) -> str:

@@ -35,6 +35,7 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from html import unescape
@@ -449,6 +450,9 @@ def extract_sources_from_tool_result(
     if entries:
         return entries
 
+    if _is_non_citable_status_output(content):
+        return []
+
     # Non-URL fallback: register the tool result itself as a source whenever
     # the tool produced non-empty output. The caller has already decided
     # this tool is eligible to contribute sources (typically by limiting
@@ -457,6 +461,16 @@ def extract_sources_from_tool_result(
         return [SourceEntry(citation_key=tool_name, source_type="tool_result", tool_name=tool_name)]
 
     return []
+
+
+def _is_non_citable_status_output(content: str) -> bool:
+    """Return whether content is a tool status/error message, not evidence."""
+    normalized = re.sub(r"\s+", " ", content.strip()).rstrip(".").lower()
+    if not normalized:
+        return False
+    if normalized.startswith("error:"):
+        return True
+    return normalized == "search returned no results" or normalized.endswith(" search returned no results")
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +600,11 @@ _REFERENCE_SECTION_RE = re.compile(
 )
 
 _CITATION_LINE_RE = re.compile(r"^\s*[-*]?\s*\[(\d+)\]\s*(.+)$", re.MULTILINE)
+_ORDERED_REFERENCE_LINE_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)$", re.MULTILINE)
+_INLINE_CITATION_RE = re.compile(r"\[(\d+)\]")
+_FOOTNOTE_REFERENCE_LINE_RE = re.compile(r"^\s*\[\^(\d+)\]:?\s*", re.MULTILINE)
+_FOOTNOTE_INLINE_CITATION_RE = re.compile(r"\[\^(\d+)\]")
+_SOURCE_LOCATION_CITATION_RE = re.compile(r"\[(\d+)\s*†[^\]]+\]")
 
 _URL_IN_LINE_RE = re.compile(r"https?://\S+")
 
@@ -626,6 +645,42 @@ def _is_knowledge_citation(ref_text: str, registry: SourceRegistry | None = None
     return False, None
 
 
+def _format_registry_reference(num: int, entry: SourceEntry) -> str | None:
+    """Render a registered source as a verifier-readable reference line."""
+    title = entry.title or entry.tool_name or entry.source_type or "Source"
+    if entry.url:
+        return f"[{num}] {title}: {entry.url}"
+    if entry.citation_key:
+        return f"[{num}] {entry.citation_key}"
+    return None
+
+
+def _normalize_citation_syntax(report_text: str) -> str:
+    """Normalize citation bracket variants before verification/sanitization."""
+    report_text = report_text.replace("【", "[").replace("】", "]")
+    report_text = _SOURCE_LOCATION_CITATION_RE.sub(r"[\1]", report_text)
+    report_text = _FOOTNOTE_REFERENCE_LINE_RE.sub(r"[\1] ", report_text)
+    return _FOOTNOTE_INLINE_CITATION_RE.sub(r"[\1]", report_text)
+
+
+def _normalize_ordered_reference_lines(ref_section: str) -> str:
+    """Convert ordered-list reference lines to the verifier's canonical [N] form."""
+    return _ORDERED_REFERENCE_LINE_RE.sub(r"\1[\2] \3", ref_section)
+
+
+def _inline_citation_numbers(text: str) -> set[int]:
+    """Return numeric inline citation labels present in text."""
+    return {int(match.group(1)) for match in _INLINE_CITATION_RE.finditer(text)}
+
+
+def _strip_inline_citations_not_in(text: str, valid_numbers: set[int]) -> str:
+    """Remove inline citations whose labels are not in valid_numbers."""
+    return _INLINE_CITATION_RE.sub(
+        lambda match: match.group(0) if int(match.group(1)) in valid_numbers else "",
+        text,
+    )
+
+
 def _renumber_citations(body: str, ref_section: str) -> tuple[str, str, dict[int, int]]:
     """Renumber [N] citations sequentially, closing any gaps.
 
@@ -660,7 +715,12 @@ def _renumber_citations(body: str, ref_section: str) -> tuple[str, str, dict[int
     return body, ref_section, renumber_map
 
 
-def verify_citations(report_text: str, registry: SourceRegistry) -> CitationVerificationResult:
+def verify_citations(
+    report_text: str,
+    registry: SourceRegistry,
+    *,
+    reference_sources: Sequence[SourceEntry] | None = None,
+) -> CitationVerificationResult:
     """Verify citations in a report against the source registry.
 
     Algorithm:
@@ -675,12 +735,15 @@ def verify_citations(report_text: str, registry: SourceRegistry) -> CitationVeri
     Args:
         report_text: The full report text with citations.
         registry: SourceRegistry populated from tool call results.
+        reference_sources: Optional writer-facing source list, in the same
+            numbering order the writer saw. Used only to synthesize a missing
+            references section.
 
     Returns:
         CitationVerificationResult with cleaned report and audit trail.
     """
-    # Normalize Unicode fullwidth brackets to ASCII (LLMs sometimes use 【N】 instead of [N])
-    report_text = report_text.replace("【", "[").replace("】", "]")
+    # Normalize citation syntax variants before validation.
+    report_text = _normalize_citation_syntax(report_text)
 
     # Early exit: nothing to validate against
     all_sources = registry.all_sources()
@@ -700,12 +763,42 @@ def verify_citations(report_text: str, registry: SourceRegistry) -> CitationVeri
     # Find references section
     ref_match = _REFERENCE_SECTION_RE.search(report_text)
     if not ref_match:
-        logger.warning("[CitationVerify] No references section found in report; skipping")
-        return CitationVerificationResult(verified_report=report_text)
+        if not _INLINE_CITATION_RE.search(report_text):
+            logger.warning("[CitationVerify] No references section found in report; skipping")
+            return CitationVerificationResult(verified_report=report_text)
+
+        if reference_sources is None:
+            logger.warning(
+                "[CitationVerify] No references section found; cannot safely synthesize references "
+                "without the writer-facing source list"
+            )
+            return CitationVerificationResult(verified_report=report_text)
+
+        writer_sources = list(reference_sources)
+        cited_numbers = sorted(_inline_citation_numbers(report_text))
+        reference_lines = [
+            line
+            for i in cited_numbers
+            if 1 <= i <= len(writer_sources)
+            if (line := _format_registry_reference(i, writer_sources[i - 1]))
+        ]
+        if not reference_lines:
+            logger.warning("[CitationVerify] No references section found and no renderable writer-facing sources")
+            return CitationVerificationResult(verified_report=_strip_inline_citations_not_in(report_text, set()))
+
+        logger.warning(
+            "[CitationVerify] No references section found; appending %d inline-cited registered source(s)",
+            len(reference_lines),
+        )
+        report_text = report_text.rstrip() + "\n\n## Sources\n" + "\n".join(reference_lines)
+        ref_match = _REFERENCE_SECTION_RE.search(report_text)
+        if ref_match is None:
+            return CitationVerificationResult(verified_report=report_text)
 
     ref_start = ref_match.start()
     body = report_text[:ref_start]
-    ref_section = report_text[ref_start:]
+    original_ref_section = report_text[ref_start:]
+    ref_section = _normalize_ordered_reference_lines(original_ref_section)
 
     # Parse citation lines in the references section
     valid_citations: list[dict] = []
@@ -792,23 +885,14 @@ def verify_citations(report_text: str, registry: SourceRegistry) -> CitationVeri
         for garbled, canonical in url_replacements.items():
             ref_section = ref_section.replace(garbled, canonical)
 
-    if not removed_citations:
-        logger.debug("[CitationVerify] Result: all %d citation(s) valid — no changes", len(valid_citations))
-        verified = body + ref_section if url_replacements else report_text
-        return CitationVerificationResult(
-            verified_report=verified,
-            valid_citations=valid_citations,
-        )
-
     removed_numbers = {c["number"] for c in removed_citations}
 
     # Remove invalid (and duplicate) reference lines from the references section.
-    cleaned_ref_lines = []
-    for line in ref_section.split("\n"):
-        line_match = _CITATION_LINE_RE.match(line)
-        if line_match and int(line_match.group(1)) in removed_numbers:
-            continue
-        cleaned_ref_lines.append(line)
+    cleaned_ref_lines = [
+        line
+        for line in ref_section.split("\n")
+        if not ((line_match := _CITATION_LINE_RE.match(line)) and int(line_match.group(1)) in removed_numbers)
+    ]
     cleaned_ref_section = "\n".join(cleaned_ref_lines)
 
     # Body fixups:
@@ -819,9 +903,8 @@ def verify_citations(report_text: str, registry: SourceRegistry) -> CitationVeri
     cleaned_body = body
     for old_num, canonical_num in duplicate_rewrites.items():
         cleaned_body = re.sub(rf"\[{old_num}\]", f"[{canonical_num}]", cleaned_body)
-    invalid_numbers = removed_numbers - set(duplicate_rewrites)
-    for num in invalid_numbers:
-        cleaned_body = re.sub(rf"\[{num}\]", "", cleaned_body)
+    valid_numbers = {c["number"] for c in valid_citations}
+    cleaned_body = _strip_inline_citations_not_in(cleaned_body, valid_numbers)
 
     # Note: renumbering is deferred to sanitize_report() which always runs after
     # this function and handles renumbering in a single pass.
@@ -911,6 +994,8 @@ def sanitize_report(report_text: str) -> ReportSanitizationResult:
     Returns:
         ReportSanitizationResult with cleaned report and audit trail.
     """
+    report_text = _normalize_citation_syntax(report_text)
+
     body_urls_removed = 0
     body_urls_replaced = 0
     shortened_urls_removed: list[str] = []
