@@ -1,21 +1,19 @@
+# TODO: THIS IS JUST FOR LOCAL TESTING, DO NOT MERGE
 #!/usr/bin/env python3
 import asyncio
 import os
 import sys
 from unittest.mock import MagicMock
 
-from you_web_search.register import SafesearchMode
-from you_web_search.register import YouWebSearchToolConfig
-from you_web_search.register import you_web_search
+from you_com.register import SafesearchMode
+from you_com.register import YouWebSearchToolConfig
+from you_com.register import you_web_search
 
 # --- Configure here ---
 QUERY = "latest AI news"
 MAX_RESULTS = 5
 MAX_CONTENT_LENGTH = None  # int or None
 SAFESEARCH = SafesearchMode.moderate
-FRESHNESS = None  # "day", "week", "month", "year", or None
-COUNTRY = None  # e.g. "US", or None
-LIVECRAWL = None  # LivecrawlMode.web / .news / .all, or None
 INCLUDE_NEWS = False
 # ----------------------
 
@@ -44,9 +42,6 @@ async def main() -> None:
         max_results=MAX_RESULTS,
         max_content_length=MAX_CONTENT_LENGTH,
         safesearch=SAFESEARCH,
-        freshness=FRESHNESS,
-        country=COUNTRY,
-        livecrawl=LIVECRAWL,
         include_news_results=INCLUDE_NEWS,
     )
 

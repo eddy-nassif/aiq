@@ -18,6 +18,7 @@ import enum
 import logging
 import os
 
+from langchain_youdotcom import YouSearchTool
 from pydantic import Field
 from pydantic import SecretStr
 
@@ -101,8 +102,6 @@ class YouWebSearchToolConfig(FunctionBaseConfig, name="you_web_search"):
 
 @register_function(config_type=YouWebSearchToolConfig)
 async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
-    from langchain_youdotcom import YouSearchTool
-
     if not os.environ.get("YDC_API_KEY") and tool_config.api_key:
         os.environ["YDC_API_KEY"] = tool_config.api_key.get_secret_value()
 
@@ -210,14 +209,13 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
                 if attempt == tool_config.max_retries - 1:
                     error_msg = str(e)
                     if isinstance(e, ValueError):
-                        # TODO: What to do here?
-                        print(error_msg)
                         return error_msg
                     if "401" in error_msg or "Unauthorized" in error_msg:
                         return (
                             "Error: Web search failed due to invalid API key (401 Unauthorized).\n"
                             "Please check your YDC_API_KEY and ensure it is valid.\n"
                         )
+                    return f"Error: Web search failed after {tool_config.max_retries} attempts: {error_msg}"
                 await asyncio.sleep(2**attempt)
 
     yield FunctionInfo.from_fn(

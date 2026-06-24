@@ -18,11 +18,11 @@ build-backend = "setuptools.build_meta"
 requires = ["setuptools >= 64", "setuptools-scm>=8"]
 
 [tool.setuptools]
-packages = ["you_web_search"]
-package-dir = {"you_web_search" = "src"}
+packages = ["you_com"]
+package-dir = {"you_com" = "src"}
 
 [project]
-name = "you-web-search"
+name = "you-com"
 version = "1.0.0"
 description = "NAT-based You.com web search tool"
 readme = "README.md"
@@ -35,4 +35,4 @@ dependencies = [
 ]
 
 [project.entry-points."nat.plugins"]
-you_web_search = "you_web_search.register"
+you_com = "you_com.register"
