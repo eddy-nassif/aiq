@@ -87,7 +87,9 @@ class YouWebSearchToolConfig(FunctionBaseConfig, name="you_web_search"):
     )
     max_content_length: int | None = Field(
         default=None,
-        description="Max characters per result content. If set, truncates each result to reduce token usage.",
+        description="If set, truncates each livecrawl result to specified amount of characters. "
+        "Can be used to reduce token usage. "
+        "Titles and descriptions always remain fully in tact, only livecrawl content is truncated.",
     )
     include_news_results: bool = Field(
         default=False,
@@ -133,13 +135,19 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
 
     api_key = tool_config.api_key.get_secret_value() if tool_config.api_key else os.environ.get("YDC_API_KEY")
 
+    livecrawl_mode = (
+        None if tool_config.livecrawl_mode.value == LivecrawlMode.off.value else tool_config.livecrawl_mode.value
+    )
+    livecrawl_format = (
+        None if tool_config.livecrawl_format.value == LivecrawlFormat.off.value else tool_config.livecrawl_format.value
+    )
     wrapper_kwargs = {
         k: v
         for k, v in {
             "ydc_api_key": api_key,
             "count": tool_config.max_results,
-            "livecrawl": tool_config.livecrawl_mode.value,
-            "livecrawl_formats": tool_config.livecrawl_format.value,
+            "livecrawl": livecrawl_mode,
+            "livecrawl_formats": livecrawl_format,
             "freshness": tool_config.freshness.value,
             "safesearch": tool_config.safesearch.value,
         }.items()
@@ -164,9 +172,6 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
             return _query_cache[question]
 
         def _format_documents(search_docs) -> list[str]:
-            # TODO: Need to format so that we don't get a content too large error from LLM
-            #   But so many different LLMs can be used, how will we know what to truncate to?
-            #   Can I read config and use max_tokens?
             formatted_results = []
             for doc in search_docs:
                 if not tool_config.include_news_results and doc.metadata.get("source") == "news":
