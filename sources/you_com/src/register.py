@@ -18,9 +18,12 @@ import enum
 import logging
 import os
 
+from langchain_youdotcom import YouFinanceResearchTool
+from langchain_youdotcom import YouResearchTool
 from langchain_youdotcom import YouSearchTool
 from pydantic import Field
 from pydantic import SecretStr
+from pydantic import field_validator
 
 from nat.builder.builder import Builder
 from nat.builder.function_info import FunctionInfo
@@ -226,4 +229,237 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
     yield FunctionInfo.from_fn(
         _you_web_search,
         description=_you_web_search.__doc__,
+    )
+
+
+class ResearchEffort(enum.Enum):
+    lite = "lite"
+    standard = "standard"
+    deep = "deep"
+    exhaustive = "exhaustive"
+
+
+_FINANCE_RESEARCH_EFFORTS = {ResearchEffort.deep, ResearchEffort.exhaustive}
+
+
+class YouFinanceResearchToolConfig(FunctionBaseConfig, name="you_finance_research"):
+    """
+    Tool that answers financial questions using the You.com Finance Research API.
+    Searches a finance-optimized index (SEC filings, earnings, equity prices, macro
+    indicators) and returns a cited markdown response. Requires YDC_API_KEY.
+    """
+
+    api_key: SecretStr | None = Field(default=None, description="The API key for the You.com service")
+    research_effort: ResearchEffort = Field(
+        default=ResearchEffort.deep,
+        description="Research depth: 'deep' (faster) or 'exhaustive' (up to 300s)",
+    )
+    max_retries: int = Field(default=3, description="Maximum number of retries for the request")
+    timeout: float | None = Field(
+        default=None,
+        description="Timeout in seconds per attempt. None means no timeout.",
+    )
+
+    @field_validator("research_effort")
+    @classmethod
+    def _finance_effort_must_be_deep_or_exhaustive(cls, v: ResearchEffort) -> ResearchEffort:
+        if v not in _FINANCE_RESEARCH_EFFORTS:
+            raise ValueError(f"Finance research only supports 'deep' or 'exhaustive', got '{v.value}'")
+        return v
+
+
+@register_function(config_type=YouFinanceResearchToolConfig)
+async def you_finance_research(tool_config: YouFinanceResearchToolConfig, builder: Builder):
+    if not os.environ.get("YDC_API_KEY") and tool_config.api_key:
+        os.environ["YDC_API_KEY"] = tool_config.api_key.get_secret_value()
+
+    if not os.environ.get("YDC_API_KEY"):
+        global _missing_key_warned
+        if not _missing_key_warned:
+            logger.warning(
+                "YDC_API_KEY not found. The finance research tool will be registered but will "
+                "return an error when called. To enable: set YDC_API_KEY in your environment, "
+                ".env file, or specify api_key in your workflow config."
+            )
+            _missing_key_warned = True
+
+        async def _you_finance_research_stub(question: str) -> str:
+            """Finance research tool (unavailable - missing YDC_API_KEY)."""
+            return (
+                "Error: Finance research is unavailable because YDC_API_KEY is not set.\n"
+                "To enable this tool:\n"
+                "1. Get an API key from https://you.com/docs/quickstart\n"
+                "2. Set the API key in your environment or in your .env file\n"
+                "3. Restart the application"
+            )
+
+        yield FunctionInfo.from_fn(
+            _you_finance_research_stub,
+            description=_you_finance_research_stub.__doc__,
+        )
+        return
+
+    api_key = tool_config.api_key.get_secret_value() if tool_config.api_key else os.environ.get("YDC_API_KEY")
+
+    finance_tool = YouFinanceResearchTool(
+        api_wrapper={
+            "ydc_api_key": api_key,
+            "research_effort": tool_config.research_effort.value,
+        }
+    )
+
+    _query_cache: dict[str, str] = {}
+    _CACHE_MAX_SIZE = 500
+
+    async def _you_finance_research(question: str) -> str:
+        """Answers financial questions using the You.com Finance Research API.
+
+        Searches a finance-optimized index covering SEC filings, earnings, equity
+        prices, macro indicators, and financial news. Returns a cited markdown response.
+
+        Args:
+            question (str): The financial question to research.
+
+        Returns:
+            str: Markdown answer with cited sources.
+        """
+        if question in _query_cache:
+            logger.debug("Cache hit for query: %s", question[:80])
+            return _query_cache[question]
+
+        for attempt in range(tool_config.max_retries):
+            try:
+                coro = finance_tool.api_wrapper.finance_text_async(question)
+                text = await (asyncio.wait_for(coro, timeout=tool_config.timeout) if tool_config.timeout else coro)
+                if not text or not text.strip():
+                    raise ValueError("Finance research returned no results.")
+
+                if len(_query_cache) >= _CACHE_MAX_SIZE:
+                    _query_cache.pop(next(iter(_query_cache)))
+                _query_cache[question] = text
+                return text
+
+            except Exception as e:
+                if attempt == tool_config.max_retries - 1:
+                    error_msg = str(e)
+                    if isinstance(e, ValueError):
+                        return error_msg
+                    if "401" in error_msg or "Unauthorized" in error_msg:
+                        return (
+                            "Error: Finance research failed due to invalid API key (401 Unauthorized).\n"
+                            "Please check your YDC_API_KEY and ensure it is valid.\n"
+                        )
+                    return f"Error: Finance research failed after {tool_config.max_retries} attempts: {error_msg}"
+                await asyncio.sleep(2**attempt)
+
+    yield FunctionInfo.from_fn(
+        _you_finance_research,
+        description=_you_finance_research.__doc__,
+    )
+
+
+class YouResearchToolConfig(FunctionBaseConfig, name="you_research"):
+    """
+    Tool that answers open-domain questions using the You.com Research API.
+    Synthesizes a cited markdown answer from live web sources. Requires YDC_API_KEY.
+    """
+
+    api_key: SecretStr | None = Field(default=None, description="The API key for the You.com service")
+    research_effort: ResearchEffort = Field(
+        default=ResearchEffort.standard,
+        description="Research depth: 'lite', 'standard', 'deep', or 'exhaustive' (slower, more thorough)",
+    )
+    max_retries: int = Field(default=3, description="Maximum number of retries for the request")
+    timeout: float | None = Field(
+        default=None,
+        description="Timeout in seconds per attempt. None means no timeout.",
+    )
+
+
+@register_function(config_type=YouResearchToolConfig)
+async def you_research(tool_config: YouResearchToolConfig, builder: Builder):
+    if not os.environ.get("YDC_API_KEY") and tool_config.api_key:
+        os.environ["YDC_API_KEY"] = tool_config.api_key.get_secret_value()
+
+    if not os.environ.get("YDC_API_KEY"):
+        global _missing_key_warned
+        if not _missing_key_warned:
+            logger.warning(
+                "YDC_API_KEY not found. The research tool will be registered but will "
+                "return an error when called. To enable: set YDC_API_KEY in your environment, "
+                ".env file, or specify api_key in your workflow config."
+            )
+            _missing_key_warned = True
+
+        async def _you_research_stub(question: str) -> str:
+            """Research tool (unavailable - missing YDC_API_KEY)."""
+            return (
+                "Error: Research is unavailable because YDC_API_KEY is not set.\n"
+                "To enable this tool:\n"
+                "1. Get an API key from https://you.com/docs/quickstart\n"
+                "2. Set the API key in your environment or in your .env file\n"
+                "3. Restart the application"
+            )
+
+        yield FunctionInfo.from_fn(
+            _you_research_stub,
+            description=_you_research_stub.__doc__,
+        )
+        return
+
+    api_key = tool_config.api_key.get_secret_value() if tool_config.api_key else os.environ.get("YDC_API_KEY")
+
+    research_tool = YouResearchTool(
+        api_wrapper={
+            "ydc_api_key": api_key,
+            "research_effort": tool_config.research_effort.value,
+        }
+    )
+
+    _query_cache: dict[str, str] = {}
+    _CACHE_MAX_SIZE = 500
+
+    async def _you_research(question: str) -> str:
+        """Answers open-domain questions using the You.com Research API.
+
+        Synthesizes a cited markdown answer from live web sources.
+
+        Args:
+            question (str): The question to research.
+
+        Returns:
+            str: Markdown answer with cited sources.
+        """
+        if question in _query_cache:
+            logger.debug("Cache hit for query: %s", question[:80])
+            return _query_cache[question]
+
+        for attempt in range(tool_config.max_retries):
+            try:
+                coro = research_tool.api_wrapper.research_text_async(question)
+                text = await (asyncio.wait_for(coro, timeout=tool_config.timeout) if tool_config.timeout else coro)
+                if not text or not text.strip():
+                    raise ValueError("Research returned no results.")
+
+                if len(_query_cache) >= _CACHE_MAX_SIZE:
+                    _query_cache.pop(next(iter(_query_cache)))
+                _query_cache[question] = text
+                return text
+
+            except Exception as e:
+                if attempt == tool_config.max_retries - 1:
+                    error_msg = str(e)
+                    if isinstance(e, ValueError):
+                        return error_msg
+                    if "401" in error_msg or "Unauthorized" in error_msg:
+                        return (
+                            "Error: Research failed due to invalid API key (401 Unauthorized).\n"
+                            "Please check your YDC_API_KEY and ensure it is valid.\n"
+                        )
+                    return f"Error: Research failed after {tool_config.max_retries} attempts: {error_msg}"
+                await asyncio.sleep(2**attempt)
+
+    yield FunctionInfo.from_fn(
+        _you_research,
+        description=_you_research.__doc__,
     )

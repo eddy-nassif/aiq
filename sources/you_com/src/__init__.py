@@ -15,8 +15,12 @@
 
 """You.com web search tool for NAT."""
 
+from .register import you_finance_research  # noqa: F401
+from .register import you_research  # noqa: F401
 from .register import you_web_search  # noqa: F401
 
 __all__ = [
+    "you_finance_research",
+    "you_research",
     "you_web_search",
 ]
