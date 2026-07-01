@@ -81,6 +81,7 @@ class EmptySourceRegistryError(Exception):
         unavailable_tools: list[str] | None = None,
         available_count: int = 0,
     ) -> None:
+        """Build the empty-registry error with agent type and tool-availability context."""
         self.agent_type = agent_type
         self.unavailable_tools = unavailable_tools or []
         self.available_count = available_count
@@ -171,6 +172,7 @@ class SourceRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize empty URL, parsed-URL, and citation-key indexes."""
         self._urls: dict[str, SourceEntry] = {}
         self._parsed_urls: dict[str, _ParsedURL] = {}
         self._citation_keys: list[SourceEntry] = []
@@ -667,6 +669,86 @@ def _format_registry_reference(num: int, entry: SourceEntry) -> str | None:
     return None
 
 
+def _normalize_reference_title(text: str) -> str:
+    """Normalize a source-line title for exact-match backfill comparison.
+
+    Strips any trailing URL, trailing parenthetical (e.g. ``(Internal)``),
+    markdown emphasis, and a trailing ``:`` separator, then lowercases and
+    collapses whitespace so a writer line and its registry entry compare equal.
+    """
+    cleaned = _URL_IN_LINE_RE.sub("", text)
+    cleaned = re.sub(r"\s*\(.*?\)\s*$", "", cleaned)
+    cleaned = re.sub(r"\*+", "", cleaned)
+    cleaned = cleaned.strip().rstrip(":").strip()
+    return re.sub(r"\s+", " ", cleaned).lower()
+
+
+def _build_reference_title_index(
+    reference_sources: Sequence[SourceEntry] | None,
+    registry: SourceRegistry,
+) -> dict[str, tuple[str | None, str | None]]:
+    """Index writer-facing source titles to their registry-validated target.
+
+    Used to repair URL-less ``[N] Title`` lines (the writer dropped the ``: url``
+    suffix) from the same captured-source list the writer was shown. Each title
+    is validated against the registry exactly as an inline target would be, and
+    titles shared by more than one distinct source are dropped so an ambiguous
+    title is never auto-resolved.
+
+    Args:
+        reference_sources: Writer-facing source list, or None.
+        registry: SourceRegistry the targets must resolve against.
+
+    Returns:
+        Mapping of normalized title -> ``(canonical_url, citation_key)`` with
+        exactly one tuple value set.
+    """
+    if not reference_sources:
+        return {}
+    index: dict[str, tuple[str | None, str | None]] = {}
+    ambiguous: set[str] = set()
+    for entry in reference_sources:
+        if not entry.title:
+            continue
+        key = _normalize_reference_title(entry.title)
+        if not key:
+            continue
+        target: tuple[str | None, str | None] | None = None
+        if entry.url:
+            canonical = registry.resolve_url(entry.url)
+            if canonical:
+                target = (canonical, None)
+        elif entry.citation_key and registry.has_citation_key(entry.citation_key):
+            target = (None, entry.citation_key)
+        if target is None:
+            continue
+        if key in index and index[key] != target:
+            ambiguous.add(key)
+            continue
+        index[key] = target
+    for key in ambiguous:
+        index.pop(key, None)
+    return index
+
+
+def _backfill_reference_target(
+    ref_text: str,
+    reference_index: dict[str, tuple[str | None, str | None]],
+) -> tuple[str | None, str | None] | None:
+    """Resolve a URL-less source line's title to a registry-backed target.
+
+    Exact normalized-title match only. Aggregate-style labels (multiple sources
+    joined with ``;``) are never matched, so they keep stripping as before.
+
+    Returns:
+        ``(canonical_url, citation_key)`` when the title uniquely maps to a
+        registry source, otherwise None.
+    """
+    if ";" in ref_text:
+        return None
+    return reference_index.get(_normalize_reference_title(ref_text))
+
+
 def _normalize_citation_syntax(report_text: str) -> str:
     """Normalize citation bracket variants before verification/sanitization."""
     report_text = report_text.replace("【", "[").replace("】", "]")
@@ -880,6 +962,12 @@ def verify_citations(
     valid_citations: list[dict] = []
     removed_citations: list[dict] = []
     url_replacements: dict[str, str] = {}  # garbled_url -> canonical_url
+    line_replacements: dict[str, str] = {}  # url-less line -> backfilled canonical line
+
+    # Exact-title index over the writer-facing source list, so a "[N] Title"
+    # line whose ": url" suffix the writer dropped can be repaired from the same
+    # captured registry instead of stripped (recall fix, precision unchanged).
+    reference_index = _build_reference_title_index(reference_sources, registry)
 
     for line_match in _CITATION_LINE_RE.finditer(ref_section):
         num = int(line_match.group(1))
@@ -912,6 +1000,22 @@ def verify_citations(
             else:
                 logger.debug("[CitationVerify]   [%d] REMOVE — citation_key_not_in_registry: %s", num, citation_key)
                 removed_citations.append({"number": num, "line": full_line, "reason": "citation_key_not_in_registry"})
+            continue
+
+        # Backfill: the writer emitted "[N] Title" but dropped the verified URL.
+        # Recover the target from the writer-facing source list (exact-title,
+        # unique match) and rewrite the line to canonical "[N] Title: url" form.
+        backfilled = _backfill_reference_target(ref_text, reference_index)
+        if backfilled:
+            canonical_url, citation_key = backfilled
+            if canonical_url:
+                rewritten = f"[{num}] {ref_text}: {canonical_url}"
+                line_replacements[full_line] = rewritten
+                logger.info("[CitationVerify]   [%d] BACKFILL — %s", num, canonical_url)
+                valid_citations.append({"number": num, "url": canonical_url, "citation_key": None, "line": rewritten})
+            else:
+                logger.info("[CitationVerify]   [%d] BACKFILL — %s", num, citation_key)
+                valid_citations.append({"number": num, "url": None, "citation_key": citation_key, "line": full_line})
             continue
 
         # Neither URL nor recognizable citation key
@@ -960,6 +1064,11 @@ def verify_citations(
     if url_replacements:
         for garbled, canonical in url_replacements.items():
             ref_section = ref_section.replace(garbled, canonical)
+
+    # Apply backfilled lines (url-less "[N] Title" -> "[N] Title: url").
+    if line_replacements:
+        for original, rewritten in line_replacements.items():
+            ref_section = ref_section.replace(original, rewritten)
 
     removed_numbers = {c["number"] for c in removed_citations}
 
@@ -1036,7 +1145,7 @@ _SUSPICIOUS_SCHEMES_RE = re.compile(r"^(?:javascript|data|vbscript|file):", re.I
 _BARE_URL_RE = re.compile(r"https?://[^\s<>\"'\]]+")
 
 # Body URL patterns (used by sanitize_report)
-_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*\w+://[^\s)]+\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*(\w+://[^\s)]+)\)")
 _BODY_URL_RE = re.compile(r"\w+://[^\s<>\"'\]]+")
 
 
@@ -1102,8 +1211,14 @@ def sanitize_report(report_text: str) -> ReportSanitizationResult:
                 url_to_citation[_normalize_url(url_m.group(0).rstrip(_URL_TRIM_CHARS))] = num
 
     def _replace_body_url(match: re.Match) -> str:
+        """Replace a bare body URL with its citation number, or strip it; keep artifact refs."""
         nonlocal body_urls_removed, body_urls_replaced
         url = match.group(0).rstrip(_URL_TRIM_CHARS)
+        # Preserve internal artifact references (e.g. embedded chart images). They use the
+        # non-http ``artifact://`` scheme and are validated/rewritten downstream by
+        # ArtifactManager.resolve_report_references, so they must survive sanitization.
+        if url.startswith("artifact://"):
+            return match.group(0)
         normalized = _normalize_url(url)
         if normalized in url_to_citation:
             body_urls_replaced += 1
@@ -1111,8 +1226,17 @@ def sanitize_report(report_text: str) -> ReportSanitizationResult:
         body_urls_removed += 1
         return ""
 
-    # Collapse markdown links to display text
-    cleaned_body = _MD_LINK_RE.sub(r"\1", body)
+    # Collapse markdown links to display text, but preserve internal artifact:// image
+    # references verbatim so embedded charts survive into the final report.
+    def _collapse_md_link(match: re.Match) -> str:
+        """Collapse a markdown link to its display text, preserving ``artifact://`` targets."""
+        # Preserve only when the link destination is an artifact ref; a label that merely
+        # contains "artifact://" must still collapse so stray URLs don't leak into the body.
+        if match.group(2).startswith("artifact://"):
+            return match.group(0)
+        return match.group(1)
+
+    cleaned_body = _MD_LINK_RE.sub(_collapse_md_link, body)
     # Replace matching bare URLs with [N], strip the rest
     cleaned_body = _BODY_URL_RE.sub(_replace_body_url, cleaned_body)
     # Clean up leftover empty parentheses and extra spaces

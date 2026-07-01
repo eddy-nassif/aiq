@@ -125,24 +125,36 @@ class DeepResearchGraphContext:
 
     @property
     def available_documents(self) -> list[dict[str, Any]]:
+        """Return the user-uploaded documents for this run as serialized dicts."""
         return [doc.model_dump() for doc in (self.state.available_documents or [])]
 
     def render_prompt(self, prompt_name: str, **values: Any) -> str:
+        """Render a named prompt template with shared context plus any overrides."""
+        prompt_values = {
+            "current_datetime": self.current_datetime,
+            "user_info": self.state.user_info,
+            "available_documents": self.available_documents,
+            "execution_enabled": self.runtime.execution_enabled,
+            "skills_enabled": self.runtime.skills_enabled,
+            "sandbox_workdir": self.runtime.workdir,
+            "sandbox_artifact_dir": self.runtime.artifact_dir,
+            **values,
+        }
         return render_prompt_template(
             self.prompts[prompt_name],
-            current_datetime=self.current_datetime,
-            user_info=self.state.user_info,
-            available_documents=self.available_documents,
-            **values,
+            **prompt_values,
         )
 
     def middleware(self, base: Sequence[Any]) -> list[Any]:
+        """Return the base middleware stack extended with tool-visibility middleware."""
         return [*base, *self.visibility_middleware]
 
     def permissions(self, agent_name: str) -> list[FilesystemPermission]:
+        """Return the skill-derived filesystem permissions for an agent."""
         return runtime_skill_filesystem_permissions(self.runtime, agent_name)
 
     def skill_sources(self, agent_name: str) -> list[str] | None:
+        """Return the resolved skill source paths for an agent, or None."""
         return self.runtime.skill_sources_for(agent_name)
 
 
@@ -211,6 +223,7 @@ def build_deep_research_middleware_set(
     """Build researcher, writer, and orchestrator middleware stacks."""
 
     def common(extra_valid_tool_names: Sequence[str] = ()) -> list[Any]:
+        """Build the shared middleware stack, allowing extra valid tool names."""
         return build_common_middleware(
             tool_set=tool_set,
             source_registry_middleware=source_registry_middleware,
@@ -321,6 +334,7 @@ def _subagent_spec(
     response_format: Any = None,
     skills: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Assemble a deepagents subagent spec (prompt, model, tools, permissions, middleware)."""
     spec: dict[str, Any] = {
         "name": name,
         "description": description,

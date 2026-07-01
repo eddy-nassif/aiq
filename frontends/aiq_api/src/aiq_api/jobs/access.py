@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -29,7 +30,13 @@ from sqlalchemy.engine import Connection
 from aiq_agent.auth import Principal
 from aiq_agent.auth import get_current_principal
 
+logger = logging.getLogger(__name__)
+
 _job_access_schema_initialized: set[str] = set()
+
+# Statuses that mean a job no longer holds a live sandbox. Anything else (running,
+# pending, submitted, etc.) counts as active for the concurrency guard.
+_TERMINAL_STATUS_SQL = "('success','failure','failed','interrupted','cancelled','completed','error')"
 
 _JOB_ACCESS_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_job_access_owner ON job_access(owner_auth_type, owner_subject)"
 _JOB_ACCESS_SELECT_SQL = text(
@@ -44,6 +51,7 @@ _JOB_EVENTS_DELETE_SQL = text("DELETE FROM job_events WHERE job_id = :job_id")
 
 
 def _is_postgres(db_url: str) -> bool:
+    """Return whether the database URL targets PostgreSQL."""
     return db_url.startswith("postgres")
 
 
@@ -110,6 +118,50 @@ def rollback_job_submission(job_id: str, db_url: str) -> None:
         conn.commit()
 
 
+def count_active_jobs_for_owner(db_url: str, principal: Principal) -> int | None:
+    """Count an owner's non-terminal, non-expired jobs.
+
+    Returns ``None`` if the count cannot be computed (e.g. the NAT ``job_info``
+    schema differs); callers should fail open so a query mismatch never blocks
+    legitimate submissions. Used by the submit-path sandbox concurrency guard.
+    """
+    try:
+        with _job_access_connection(db_url) as conn:
+            _ensure_job_access_schema(conn, db_url)
+            row = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM job_access ja JOIN job_info ji ON ja.job_id = ji.job_id "
+                    "WHERE ja.owner_auth_type = :t AND ja.owner_subject = :s "
+                    "AND (ji.is_expired IS NOT TRUE) "
+                    f"AND lower(ji.status) NOT IN {_TERMINAL_STATUS_SQL}"
+                ),
+                {"t": principal.type, "s": principal.sub},
+            ).scalar()
+            return int(row or 0)
+    except Exception as exc:  # noqa: BLE001 - guard must fail open, never block submits
+        logger.warning("Could not count active jobs for owner; allowing submit: %s", exc)
+        return None
+
+
+def count_active_jobs_global(db_url: str) -> int | None:
+    """Count all non-terminal, non-expired jobs (global capacity guard).
+
+    Returns ``None`` on query failure so callers fail open.
+    """
+    try:
+        with _job_access_connection(db_url) as conn:
+            row = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM job_info "
+                    f"WHERE (is_expired IS NOT TRUE) AND lower(status) NOT IN {_TERMINAL_STATUS_SQL}"
+                )
+            ).scalar()
+            return int(row or 0)
+    except Exception as exc:  # noqa: BLE001 - guard must fail open, never block submits
+        logger.warning("Could not count active jobs globally; allowing submit: %s", exc)
+        return None
+
+
 def _make_no_auth_principal(owner: str | None = None) -> Principal:
     """Synthesize a principal for deployments with auth disabled (REQUIRE_AUTH=false).
 
@@ -173,10 +225,12 @@ async def authorize_job_access(job_store: Any, db_url: str, job_id: str, princip
 
 
 def _principal_matches_access(principal: Principal, access: Mapping[str, Any]) -> bool:
+    """Return whether a principal matches a job-access row's owner identity."""
     return principal.type == access.get("owner_auth_type") and principal.sub == access.get("owner_subject")
 
 
 def _job_access_connection(db_url: str):
+    """Open a sync connection on the shared event-store engine for the URL."""
     from .event_store import EventStore
 
     engine = EventStore._get_or_create_sync_engine(db_url)
@@ -184,6 +238,7 @@ def _job_access_connection(db_url: str):
 
 
 def _ensure_job_access_schema(conn: Connection, db_url: str) -> None:
+    """Create the ``job_access`` table and index once per database URL."""
     if db_url in _job_access_schema_initialized:
         return
     conn.execute(text(_job_access_table_sql(db_url)))
@@ -192,6 +247,7 @@ def _ensure_job_access_schema(conn: Connection, db_url: str) -> None:
 
 
 def _job_access_table_sql(db_url: str) -> str:
+    """Return the ``CREATE TABLE`` SQL for ``job_access``, dialect-aware for the URL."""
     created_at_type = (
         "TIMESTAMP WITH TIME ZONE DEFAULT NOW()" if _is_postgres(db_url) else "DATETIME DEFAULT CURRENT_TIMESTAMP"
     )
@@ -207,6 +263,7 @@ def _job_access_table_sql(db_url: str) -> str:
 
 
 def _job_access_upsert_sql(db_url: str):
+    """Return the dialect-appropriate upsert statement for ``job_access``."""
     postgres_upsert = (
         "INSERT INTO job_access (job_id, owner_auth_type, owner_subject, owner_email) "
         "VALUES (:job_id, :owner_auth_type, :owner_subject, :owner_email) "
@@ -223,6 +280,7 @@ def _job_access_upsert_sql(db_url: str):
 
 
 def _principal_params(job_id: str, principal: Principal) -> dict[str, str | None]:
+    """Return the SQL bind params for a job's owner identity."""
     return {
         "job_id": job_id,
         "owner_auth_type": principal.type,

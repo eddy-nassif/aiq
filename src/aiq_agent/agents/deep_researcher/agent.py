@@ -17,8 +17,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from collections.abc import Callable
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -77,6 +79,8 @@ class DeepResearcherAgent:
         skills: DeepResearchSkillsConfig | None = None,
         sandbox: DeepResearchSandboxConfig | None = None,
         job_id: str | None = None,
+        artifact_db_url: str | None = None,
+        artifact_emit: Callable[[dict[str, Any]], None] | None = None,
         max_research_concurrency: int = DEFAULT_MAX_RESEARCH_CONCURRENCY,
         max_concurrent_source_tool_calls: int = DEFAULT_MAX_CONCURRENT_SOURCE_TOOL_CALLS,
         max_source_tool_batch_size: int = DEFAULT_MAX_SOURCE_TOOL_BATCH_SIZE,
@@ -112,7 +116,13 @@ class DeepResearcherAgent:
         self.enable_citation_verification = enable_citation_verification
         self.job_id = str(job_id) if job_id is not None else str(uuid4())
 
-        self.deepagents_runtime = DeepAgentsRuntime(skills=skills, sandbox=sandbox, job_id=self.job_id)
+        self.deepagents_runtime = DeepAgentsRuntime(
+            skills=skills,
+            sandbox=sandbox,
+            job_id=self.job_id,
+            artifact_db_url=artifact_db_url,
+            artifact_emit=artifact_emit,
+        )
 
         self._prompts = self._load_prompts()
         source_tool_names = {tool.name for tool in self.tools}
@@ -283,6 +293,27 @@ class DeepResearcherAgent:
             # Post-process: sanitize report (strip body URLs, shortened URLs, unsafe URLs)
             sanitization = sanitize_report(final_message)
             final_message = sanitization.sanitized_report
+
+            # Post-process: harvest sandbox artifacts and resolve artifact:// references so
+            # generated charts/files render in the report. Inert (manager is None) unless a
+            # sandbox + artifact_capture + db_url are configured. Blocking I/O off the loop.
+            manager = self.deepagents_runtime.artifact_manager
+            if manager is not None:
+                try:
+                    await asyncio.to_thread(manager.final_harvest)
+                    produced = await asyncio.to_thread(manager.store.list, manager.job_id)
+                    final_message = await asyncio.to_thread(manager.resolve_report_references, final_message, produced)
+                    final_message = await asyncio.to_thread(
+                        manager.ensure_inline_artifacts_embedded, final_message, produced
+                    )
+                    final_message = await asyncio.to_thread(manager.append_artifact_index, final_message, produced)
+                except Exception:
+                    # Best-effort: never discard an already verified/sanitized report because
+                    # artifact harvest or embedding failed. final_message stays as-is.
+                    logger.warning(
+                        "Artifact post-processing failed; returning report without embedded artifacts",
+                        exc_info=True,
+                    )
 
             # Re-emit the verified/sanitized report so the frontend overwrites
             # the raw version that on_llm_end auto-emitted during ainvoke().

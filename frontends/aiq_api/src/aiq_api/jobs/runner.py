@@ -72,6 +72,14 @@ class CancellationMonitor:
         job_id: str,
         poll_interval: float = 1.0,
     ):
+        """Configure the job-status poller used to detect interruption.
+
+        Args:
+            scheduler_address: Dask scheduler address (unused by polling, kept for context).
+            db_url: Database URL of the job store to poll.
+            job_id: Job whose status is monitored.
+            poll_interval: Seconds between status polls.
+        """
         self.scheduler_address = scheduler_address
         self.db_url = db_url
         self.job_id = job_id
@@ -81,6 +89,7 @@ class CancellationMonitor:
 
     @property
     def is_cancelled(self) -> bool:
+        """Return whether the monitored job has been interrupted."""
         return self._cancelled.is_set()
 
     async def _poll_job_status(self) -> None:
@@ -315,6 +324,9 @@ async def run_agent_job(
     job_store: JobStore | None = None
     cancellation_monitor: CancellationMonitor | None = None
     event_store: EventStore | BatchingEventStore | None = None
+    # Sandbox runtime is released on the terminal path; interrupted forces terminate() over close().
+    sandbox_runtime: Any | None = None
+    interrupted = False
     logger.info(
         "Dask worker received: agent=%s, config=%s, job_id=%s",
         agent_class_path,
@@ -481,7 +493,16 @@ async def run_agent_job(
                         verbose=verbose,
                         callbacks=callbacks,
                         job_id=job_id,
+                        # Artifact harvesting rides 284's job store + event stream: the same db_url
+                        # backs the SqlArtifactStore, and event_store.store carries artifact SSE
+                        # events. Inert unless sandbox.artifact_capture is enabled in config.
+                        artifact_db_url=db_url,
+                        artifact_emit=event_store.store,
                     )
+
+                    # Capture the runtime so the terminal path can release the sandbox. None for
+                    # agents without a sandbox runtime; close()/terminate() are then no-ops.
+                    sandbox_runtime = getattr(agent, "deepagents_runtime", None)
 
                     # Run agent - LLM/tool events will be nested under workflow span
                     result = await _run_agent(
@@ -529,6 +550,7 @@ async def run_agent_job(
 
     except asyncio.CancelledError:
         logger.info("Job %s cancelled", job_id)
+        interrupted = True
         if job_store:
             try:
                 job = await job_store.get_job(job_id)
@@ -575,11 +597,35 @@ async def run_agent_job(
             event_store.flush()
         if cancellation_monitor:
             cancellation_monitor.stop()
+        # Release the sandbox off the event loop so the SDK session close never blocks the Dask
+        # worker. The single artifact harvest already ran in agent.run() before this point, so
+        # teardown only closes/terminates; interrupted jobs terminate() to preempt a live execute.
+        await asyncio.to_thread(_teardown_sandbox, sandbox_runtime, job_id=job_id, interrupted=interrupted)
         # Clean up job-scoped auth token
         if _auth_token_reset is not None:
             from ._auth_context import job_auth_token
 
             job_auth_token.reset(_auth_token_reset)
+
+
+def _teardown_sandbox(sandbox_runtime: Any | None, *, job_id: str, interrupted: bool) -> None:
+    """Release sandbox resources on a terminal path (best-effort, never raises).
+
+    Interrupted jobs (cancel/timeout) call ``terminate()`` so a still-running ``execute`` is
+    forcibly preempted; normal paths call ``close()`` gracefully. Both are idempotent. This runs
+    off the event loop (``asyncio.to_thread``) so the SDK session close cannot block the worker.
+    """
+    if sandbox_runtime is None:
+        return
+    teardown = getattr(sandbox_runtime, "terminate", None) if interrupted else None
+    if teardown is None:
+        teardown = getattr(sandbox_runtime, "close", None)
+    if teardown is None:
+        return
+    try:
+        teardown()
+    except Exception:  # noqa: BLE001 - cleanup must never raise on the terminal path
+        logger.warning("Sandbox cleanup failed for job %s", job_id, exc_info=True)
 
 
 def _create_agent_instance(
@@ -591,6 +637,8 @@ def _create_agent_instance(
     verbose: bool,
     callbacks: list,
     job_id: str | None = None,
+    artifact_db_url: str | None = None,
+    artifact_emit=None,
 ):
     """
     Create an agent instance, supporting different constructor patterns.
@@ -613,6 +661,8 @@ def _create_agent_instance(
             skills=fn_config.skills,
             sandbox=fn_config.sandbox,
             job_id=job_id,
+            artifact_db_url=artifact_db_url,
+            artifact_emit=artifact_emit,
             max_research_concurrency=fn_config.max_research_concurrency,
             max_concurrent_source_tool_calls=fn_config.max_concurrent_source_tool_calls,
             max_source_tool_batch_size=fn_config.max_source_tool_batch_size,
