@@ -185,7 +185,6 @@ class YouWebSearchToolConfig(YouToolConfig, name="you_web_search"):
     Uses LangChain's YouSearchAPIWrapper. Requires a YDC_API_KEY environment variable or api_key config.
     """
 
-    # TODO: Write a test for each config param
     max_results: int = Field(default=10, ge=1, le=100, description="Maximum number of search results to return")
     safesearch: SafesearchMode = Field(
         default=SafesearchMode.moderate, description="Safesearch filter: 'off', 'moderate', or 'strict'"

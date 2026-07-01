@@ -43,3 +43,6 @@ to financial questions: company fundamentals, market trends, competitive analysi
 
 Key config:
 - `research_effort` — `deep` (default) or `exhaustive` only
+
+We want to hear from you. If you hit a configuration issue or have questions, reach out to us at support@you.com.
+For enterprise or private inquiries, reach out to api@you.com.
