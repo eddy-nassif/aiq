@@ -21,6 +21,7 @@ from collections.abc import Callable
 from collections.abc import Coroutine
 from typing import Any
 
+from langchain_youdotcom import YouContentsTool
 from langchain_youdotcom import YouFinanceResearchTool
 from langchain_youdotcom import YouResearchTool
 from langchain_youdotcom import YouSearchTool
@@ -69,6 +70,12 @@ class FreshnessMode(enum.Enum):
     week = "week"
     month = "month"
     year = "year"
+
+
+class ContentsFormat(enum.Enum):
+    markdown = "markdown"
+    html = "html"
+    metadata = "metadata"
 
 
 class ResearchEffort(enum.Enum):
@@ -236,6 +243,23 @@ class YouFinanceResearchToolConfig(YouToolConfig, name="you_finance_research"):
         if v not in _FINANCE_RESEARCH_EFFORTS:
             raise ValueError(f"Finance research only supports 'deep' or 'exhaustive', got '{v.value}'")
         return v
+
+
+class YouContentsToolConfig(YouToolConfig, name="you_contents"):
+    """
+    Tool that extracts clean content from URLs using the You.com Contents API.
+    Pass up to 10 URLs and receive their full page content as Markdown, HTML, or metadata.
+    Requires YDC_API_KEY.
+    """
+
+    formats: list[ContentsFormat] = Field(
+        default=[ContentsFormat.markdown, ContentsFormat.metadata],
+        description="Content formats to return: 'markdown', 'html', 'metadata'",
+    )
+    crawl_timeout: float | None = Field(
+        default=None,
+        description="Per-URL crawl timeout in seconds (1-60). Increase for JavaScript-heavy pages.",
+    )
 
 
 class YouResearchToolConfig(YouToolConfig, name="you_research"):
@@ -417,3 +441,85 @@ async def you_research(tool_config: YouResearchToolConfig, builder: Builder):
         )
 
     yield FunctionInfo.from_fn(_you_research, description=_you_research.__doc__)
+
+
+@register_function(config_type=YouContentsToolConfig)
+async def you_contents(tool_config: YouContentsToolConfig, builder: Builder):
+    api_key = _resolve_api_key(tool_config)
+
+    if not api_key:
+        _warn_missing_key_once("contents")
+
+        async def _stub(urls: list[str]) -> str:
+            return (
+                "Error: Contents API is unavailable because YDC_API_KEY is not set.\n"
+                "To enable this tool:\n"
+                "1. Get an API key from https://you.com/docs/quickstart\n"
+                "2. Set the API key in your environment or in your .env file\n"
+                "3. Restart the application"
+            )
+
+        _stub.__doc__ = "Contents API (unavailable - missing YDC_API_KEY)."
+        yield FunctionInfo.from_fn(_stub, description=_stub.__doc__)
+        return
+
+    contents_tool = YouContentsTool(api_wrapper={"ydc_api_key": api_key})
+    _cache: dict[str, str] = {}
+
+    async def _you_contents(urls: list[str]) -> str:
+        """Extracts clean content from web pages using the You.com Contents API.
+
+        Fetches up to 10 URLs in parallel and returns their content as Markdown,
+        HTML, or metadata — ready for LLM consumption, no HTML parsing required.
+
+        Args:
+            urls (list[str]): List of URLs to extract content from (max 10).
+
+        Returns:
+            str: Extracted page contents formatted as Documents.
+        """
+        cache_key = str(sorted(urls))
+        if cache_key in _cache:
+            logger.debug("Cache hit for urls: %s", urls)
+            return _cache[cache_key]
+
+        formats = [f.value for f in tool_config.formats]
+        for attempt in range(tool_config.max_retries):
+            try:
+                coro = contents_tool.api_wrapper.contents_async(
+                    urls,
+                    formats=formats,
+                    crawl_timeout=tool_config.crawl_timeout,
+                )
+                docs = await (asyncio.wait_for(coro, timeout=tool_config.timeout) if tool_config.timeout else coro)
+                if not docs:
+                    raise ValueError("Contents API returned no results.")
+
+                parts = []
+                for doc in docs:
+                    url = doc.metadata.get("url", "")
+                    title = doc.metadata.get("title", "")
+                    parts.append(
+                        f'<Document href="{url}">\n<title>\n{title}\n</title>\n{doc.page_content}\n</Document>'
+                    )
+
+                result = "\n\n---\n\n".join(parts)
+                if len(_cache) >= _CACHE_MAX_SIZE:
+                    _cache.pop(next(iter(_cache)))
+                _cache[cache_key] = result
+                return result
+
+            except Exception as e:
+                if attempt == tool_config.max_retries - 1:
+                    error_msg = str(e)
+                    if isinstance(e, ValueError):
+                        return error_msg
+                    if "401" in error_msg or "Unauthorized" in error_msg:
+                        return (
+                            "Error: Contents API failed due to invalid API key (401 Unauthorized).\n"
+                            "Please check your YDC_API_KEY and ensure it is valid.\n"
+                        )
+                    return f"Error: Contents API failed after {tool_config.max_retries} attempts: {error_msg}"
+                await asyncio.sleep(2**attempt)
+
+    yield FunctionInfo.from_fn(_you_contents, description=_you_contents.__doc__)
