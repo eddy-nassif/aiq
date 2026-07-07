@@ -91,13 +91,11 @@ class ResearchEffort(enum.Enum):
 
 
 def _resolve_api_key(tool_config: "YouToolConfig") -> str | None:
-    """Set YDC_API_KEY from config if not already in env, then return the key."""
-    if not os.environ.get("YDC_API_KEY") and tool_config.api_key:
-        os.environ["YDC_API_KEY"] = tool_config.api_key.get_secret_value()
     return tool_config.api_key.get_secret_value() if tool_config.api_key else os.environ.get("YDC_API_KEY")
 
 
 def _warn_missing_key_once(tool_desc: str) -> None:
+    # Process-once by design: all You.com tools share one key, so one warning is enough.
     global _missing_key_warned
     if not _missing_key_warned:
         logger.warning(
@@ -134,7 +132,10 @@ async def _run_with_retries(
     timeout: float | None,
     cache: dict[str, str],
 ) -> str:
-    """Execute coro_factory(question) with caching, timeout, and exponential-backoff retry."""
+    """Execute coro_factory(question) with caching, timeout, and exponential-backoff retry.
+
+    timeout is per-attempt, not end-to-end. Worst-case wall time: timeout * max_retries + backoff.
+    """
     if question in cache:
         logger.debug("Cache hit for query: %s", question[:80])
         return cache[question]

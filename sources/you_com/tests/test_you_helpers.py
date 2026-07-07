@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
+from you_com.register import YouContentsToolConfig
 from you_com.register import YouFinanceResearchToolConfig
 from you_com.register import YouResearchToolConfig
 from you_com.register import YouToolConfig
@@ -59,6 +60,9 @@ class TestRegistrationNames:
     def test_research_name(self):
         assert YouResearchToolConfig._typed_model_name == "you_research"
 
+    def test_contents_name(self):
+        assert YouContentsToolConfig._typed_model_name == "you_contents"
+
     def test_base_config_not_registered(self):
         assert YouToolConfig._typed_model_name is None
 
@@ -74,21 +78,14 @@ class TestResolveApiKey:
         config = YouToolConfig()
         assert _resolve_api_key(config) == "from-env"
 
-    def test_returns_config_key_and_sets_env(self, monkeypatch):
-        import os
-
+    def test_returns_config_key(self, monkeypatch):
         config = YouToolConfig(api_key=SecretStr("from-config"))
-        result = _resolve_api_key(config)
-        assert result == "from-config"
-        assert os.environ.get("YDC_API_KEY") == "from-config"
+        assert _resolve_api_key(config) == "from-config"
 
-    def test_env_takes_precedence_over_config_key(self, monkeypatch):
-        import os
-
+    def test_config_key_takes_precedence_over_env(self, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "from-env")
         config = YouToolConfig(api_key=SecretStr("from-config"))
-        _resolve_api_key(config)
-        assert os.environ.get("YDC_API_KEY") == "from-env"
+        assert _resolve_api_key(config) == "from-config"
 
     def test_returns_none_when_no_key(self):
         config = YouToolConfig()

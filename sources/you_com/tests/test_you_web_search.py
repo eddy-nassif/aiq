@@ -97,20 +97,14 @@ class TestYouWebSearchStub:
 
 
 class TestYouWebSearchLive:
-    async def test_api_key_from_config_sets_env(self, mock_search, monkeypatch):
-        import os
-
-        mock_search  # fixture wires factory
+    async def test_config_api_key_used(self, mock_search, monkeypatch):
         config = YouWebSearchToolConfig(api_key=SecretStr("key-from-config"))
         builder = MagicMock()
 
-        async with you_web_search(config, builder) as info:
-            mock_search["tool"].api_wrapper.results_async.return_value = [
-                _make_doc("T", "https://a.example", page_content="body")
-            ]
-            await info.single_fn("question")
+        async with you_web_search(config, builder) as _:
+            pass
 
-        assert os.environ.get("YDC_API_KEY") == "key-from-config"
+        assert mock_search["kwargs"].get("ydc_api_key") == "key-from-config"
 
     async def test_successful_search_formats_documents(self, mock_search, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")
@@ -235,4 +229,4 @@ class TestYouWebSearchLive:
             mock_search["tool"].api_wrapper.results_async.side_effect = _hang
             out = await info.single_fn("q")
 
-        assert "error" in out.lower() or "timeout" in out.lower() or out  # didn't raise
+        assert "error" in out.lower()

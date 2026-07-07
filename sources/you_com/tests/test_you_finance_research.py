@@ -91,17 +91,14 @@ class TestYouFinanceResearchStub:
 
 
 class TestYouFinanceResearchLive:
-    async def test_api_key_from_config_sets_env(self, mock_finance, monkeypatch):
-        import os
-
-        mock_finance  # fixture wires factory
+    async def test_config_api_key_used(self, mock_finance, monkeypatch):
         config = YouFinanceResearchToolConfig(api_key=SecretStr("key-from-config"))
         builder = MagicMock()
 
         async with you_finance_research(config, builder) as _:
             pass
 
-        assert os.environ.get("YDC_API_KEY") == "key-from-config"
+        assert mock_finance["kwargs"].get("api_wrapper", {}).get("ydc_api_key") == "key-from-config"
 
     async def test_successful_call_returns_markdown(self, mock_finance, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")
@@ -165,7 +162,7 @@ class TestYouFinanceResearchLive:
             mock_finance["tool"].api_wrapper.finance_text_async.side_effect = _hang
             out = await info.single_fn("q")
 
-        assert "error" in out.lower() or out  # didn't raise
+        assert "error" in out.lower()
 
     async def test_research_effort_passed_to_tool(self, mock_finance, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")

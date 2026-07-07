@@ -17,10 +17,12 @@ updates from India, then this endpoint is the right one for you.
 
 Key config:
 - `max_results` — number of results (1–100, default 10)
+- `safesearch` - `off`, `moderate`, `strict`
 - `livecrawl_mode` — `off`, `web`, `news`, `all` (default `web`)
-- `livecrawl_format` — `markdown` or `html` (default `markdown`)
+- `livecrawl_format` — `off`, `markdown`, `html` (default `markdown`)
 - `freshness` — `off`, `day`, `week`, `month`, `year`
 - `max_content_length` — truncate livecrawl content to reduce token usage
+- `include_news_results` — True/False whether or not you want to include results categorized as `news`
 
 ### `you_research`
 
@@ -43,6 +45,15 @@ to financial questions: company fundamentals, market trends, competitive analysi
 
 Key config:
 - `research_effort` — `deep` (default) or `exhaustive` only
+
+### `you_contents`
+
+Extracts clean page content from URLs using the You.com [Contents API](https://you.com/docs/api-reference/contents).
+Pass up to 10 URLs and receive their full content — no HTML parsing required.
+
+Key config:
+- `formats` — list of `markdown`, `html`, `metadata` (default `["markdown", "metadata"]`)
+- `crawl_timeout` — per-URL crawl timeout in seconds (1–60); increase for JavaScript-heavy pages
 
 We want to hear from you. If you hit a configuration issue or have questions, reach out to us at support@you.com.
 For enterprise or private inquiries, reach out to api@you.com.

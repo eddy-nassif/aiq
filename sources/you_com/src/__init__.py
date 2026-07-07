@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""You.com web search tool for NAT."""
+"""You.com tools (web search, contents, research, finance research) for NAT."""
 
+from .register import you_contents  # noqa: F401
 from .register import you_finance_research  # noqa: F401
 from .register import you_research  # noqa: F401
 from .register import you_web_search  # noqa: F401
@@ -23,4 +24,5 @@ __all__ = [
     "you_finance_research",
     "you_research",
     "you_web_search",
+    "you_contents",
 ]

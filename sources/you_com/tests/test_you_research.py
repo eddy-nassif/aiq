@@ -85,17 +85,14 @@ class TestYouResearchStub:
 
 
 class TestYouResearchLive:
-    async def test_api_key_from_config_sets_env(self, mock_research, monkeypatch):
-        import os
-
-        mock_research  # fixture wires factory
+    async def test_config_api_key_used(self, mock_research, monkeypatch):
         config = YouResearchToolConfig(api_key=SecretStr("key-from-config"))
         builder = MagicMock()
 
         async with you_research(config, builder) as _:
             pass
 
-        assert os.environ.get("YDC_API_KEY") == "key-from-config"
+        assert mock_research["kwargs"].get("api_wrapper", {}).get("ydc_api_key") == "key-from-config"
 
     async def test_successful_call_returns_markdown(self, mock_research, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")
@@ -159,7 +156,7 @@ class TestYouResearchLive:
             mock_research["tool"].api_wrapper.research_text_async.side_effect = _hang
             out = await info.single_fn("q")
 
-        assert "error" in out.lower() or out  # didn't raise
+        assert "error" in out.lower()
 
     async def test_research_effort_passed_to_tool(self, mock_research, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")
