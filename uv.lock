@@ -25,6 +25,7 @@ members = [
     "google-scholar-paper-search",
     "knowledge-layer",
     "tavily-web-search",
+    "you-com",
 ]
 overrides = [
     { name = "authlib", specifier = ">=1.6.11,<2" },
@@ -284,6 +285,7 @@ dev = [
     { name = "ruff" },
     { name = "tavily-web-search" },
     { name = "yapf" },
+    { name = "you-com" },
 ]
 
 [package.metadata]
@@ -344,6 +346,7 @@ dev = [
     { name = "ruff", specifier = "~=0.15.1" },
     { name = "tavily-web-search", editable = "sources/tavily_web_search" },
     { name = "yapf", specifier = ">=0.40.0" },
+    { name = "you-com", editable = "sources/you_com" },
 ]
 
 [[package]]
@@ -2611,6 +2614,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/41/42/c178dcdc157b473330eb7cc30883ea69b8ec60078c7b85e2d521054c4831/langchain_text_splitters-1.1.0.tar.gz", hash = "sha256:75e58acb7585dc9508f3cd9d9809cb14751283226c2d6e21fb3a9ae57582ca22", size = 272230, upload-time = "2025-12-14T01:15:38.659Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/1a/a84ed1c046deecf271356b0179c1b9fba95bfdaa6f934e1849dee26fad7b/langchain_text_splitters-1.1.0-py3-none-any.whl", hash = "sha256:f00341fe883358786104a5f881375ac830a4dd40253ecd42b4c10536c6e4693f", size = 34182, upload-time = "2025-12-14T01:15:37.382Z" },
+]
+
+[[package]]
+name = "langchain-youdotcom"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "youdotcom" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/9e/4d6fe20f509f04b245502b0816b2282232b4ef4ade14d98ec2d79b1869a4/langchain_youdotcom-0.3.1.tar.gz", hash = "sha256:dd0ad3358ad3590c0fffe673d0de173ce6d0e7930792893f0c5a5019b0b042b4", size = 104026, upload-time = "2026-06-12T22:04:28.4Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/e7/5e772c2ca51cf4fbe9d3dc606faae8f2024b3c08243f2d664b445ae6aff6/langchain_youdotcom-0.3.1-py3-none-any.whl", hash = "sha256:b76a01bdb2e7668ef3649370a625eeedd65a34a8fd68fbb997c74fd0d232b518", size = 12515, upload-time = "2026-06-12T22:04:29.299Z" },
 ]
 
 [[package]]
@@ -6680,6 +6696,37 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/31/74/8b74bae38ed7fe6793d0c15a0c8207bbb819cf287788459e5ed230996cdd/yarl-1.22.0-cp313-cp313t-win_amd64.whl", hash = "sha256:ff86011bd159a9d2dfc89c34cfd8aff12875980e3bd6a39ff097887520e60249", size = 93715, upload-time = "2025-10-06T14:11:11.739Z" },
     { url = "https://files.pythonhosted.org/packages/69/66/991858aa4b5892d57aef7ee1ba6b4d01ec3b7eb3060795d34090a3ca3278/yarl-1.22.0-cp313-cp313t-win_arm64.whl", hash = "sha256:7861058d0582b847bc4e3a4a4c46828a410bca738673f35a29ba3ca5db0b473b", size = 83857, upload-time = "2025-10-06T14:11:13.586Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
+]
+
+[[package]]
+name = "you-com"
+version = "1.0.0"
+source = { editable = "sources/you_com" }
+dependencies = [
+    { name = "httpx" },
+    { name = "langchain-youdotcom" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.24.0" },
+    { name = "langchain-youdotcom", specifier = "==0.3.1" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+]
+
+[[package]]
+name = "youdotcom"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3c/6b/1d3dd77f5968086d1606972697074ddd07b72abcb514c38a39feda77031f/youdotcom-2.3.0.tar.gz", hash = "sha256:f35e4ba53bb7f235100e7b7fcccfdcb84e9a08c85bb053d4e6c76bf29ecc7547", size = 71806, upload-time = "2026-03-04T03:21:11.067Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/0c/a57beaa961914c9014ee7ffc16697844874e4a7910848f11a55b45b58619/youdotcom-2.3.0-py3-none-any.whl", hash = "sha256:5750d0bcc88cf666b88e36e116c9775607db5d3491a02afad219eb9d4ec97eb0", size = 89388, upload-time = "2026-03-04T03:21:09.308Z" },
 ]
 
 [[package]]
