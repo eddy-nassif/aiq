@@ -311,7 +311,7 @@ requires-dist = [
     { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=2.0.1" },
     { name = "yapf", marker = "extra == 'dev'", specifier = ">=0.40.0" },
 ]
-provides-extras = ["dev", "docs", "s3", "viz"]
+provides-extras = ["s3", "dev", "docs", "viz"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -7154,7 +7154,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.24.0" },
-    { name = "langchain-youdotcom", specifier = "==0.3.1" },
+    { name = "langchain-youdotcom", specifier = ">=0.3.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
 ]
 

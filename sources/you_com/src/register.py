@@ -65,7 +65,7 @@ class LivecrawlFormat(enum.Enum):
 
 
 class FreshnessMode(enum.Enum):
-    off = None
+    off = "off"
     day = "day"
     week = "week"
     month = "month"
@@ -295,6 +295,7 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
     livecrawl_format = (
         None if tool_config.livecrawl_format.value == LivecrawlFormat.off.value else tool_config.livecrawl_format.value
     )
+    freshness = None if tool_config.freshness == FreshnessMode.off else tool_config.freshness.value
     wrapper_kwargs = {
         k: v
         for k, v in {
@@ -302,7 +303,7 @@ async def you_web_search(tool_config: YouWebSearchToolConfig, builder: Builder):
             "count": tool_config.max_results,
             "livecrawl": livecrawl_mode,
             "livecrawl_formats": livecrawl_format,
-            "freshness": tool_config.freshness.value,
+            "freshness": freshness,
             "safesearch": tool_config.safesearch.value,
         }.items()
         if v is not None

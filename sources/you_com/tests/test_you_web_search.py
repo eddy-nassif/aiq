@@ -209,7 +209,7 @@ class TestYouWebSearchLive:
 
     async def test_wrapper_kwargs_exclude_none_freshness(self, mock_search, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")
-        config = YouWebSearchToolConfig()  # freshness=off → value None
+        config = YouWebSearchToolConfig()  # freshness=off → mapped to None before request
         builder = MagicMock()
 
         async with you_web_search(config, builder) as _:
