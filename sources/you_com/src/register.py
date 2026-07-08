@@ -259,6 +259,8 @@ class YouContentsToolConfig(YouToolConfig, name="you_contents"):
     )
     crawl_timeout: float | None = Field(
         default=None,
+        ge=1,
+        le=60,
         description="Per-URL crawl timeout in seconds (1-60). Increase for JavaScript-heavy pages.",
     )
 

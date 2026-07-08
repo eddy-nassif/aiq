@@ -77,6 +77,16 @@ class TestYouContentsToolConfig:
 
         assert issubclass(YouContentsToolConfig, FunctionBaseConfig)
 
+    @pytest.mark.parametrize("bad", [0, -1, 61, 100])
+    def test_crawl_timeout_out_of_range(self, bad):
+        with pytest.raises(Exception):
+            YouContentsToolConfig(crawl_timeout=bad)
+
+    @pytest.mark.parametrize("good", [1, 30, 60])
+    def test_crawl_timeout_valid(self, good):
+        config = YouContentsToolConfig(crawl_timeout=good)
+        assert config.crawl_timeout == good
+
 
 class TestYouContentsStub:
     async def test_stub_when_no_api_key(self):
