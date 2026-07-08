@@ -175,7 +175,7 @@ class YouToolConfig(FunctionBaseConfig):
     """Base config shared by all You.com tools. Not registered directly."""
 
     api_key: SecretStr | None = Field(default=None, description="The API key for the You.com service")
-    max_retries: int = Field(default=3, description="Maximum number of retries for the request")
+    max_retries: int = Field(default=3, ge=1, description="Maximum number of retries for the request")
     timeout: float | None = Field(
         default=None,
         description="Timeout in seconds per attempt. None means no timeout.",
