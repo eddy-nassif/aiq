@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import SecretStr
+from pydantic import ValidationError
 from you_com.register import ContentsFormat
 from you_com.register import YouContentsToolConfig
 from you_com.register import you_contents
@@ -79,7 +80,7 @@ class TestYouContentsToolConfig:
 
     @pytest.mark.parametrize("bad", [0, -1, 61, 100])
     def test_crawl_timeout_out_of_range(self, bad):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             YouContentsToolConfig(crawl_timeout=bad)
 
     @pytest.mark.parametrize("good", [1, 30, 60])
