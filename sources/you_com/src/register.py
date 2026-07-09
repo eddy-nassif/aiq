@@ -107,17 +107,21 @@ def _warn_missing_key_once(tool_desc: str) -> None:
         _missing_key_warned = True
 
 
+def _stub_message(label: str) -> str:
+    return (
+        f"Error: {label} is unavailable because YDC_API_KEY is not set.\n"
+        "To enable this tool:\n"
+        "1. Get an API key from https://you.com/docs/quickstart\n"
+        "2. Set the API key in your environment or in your .env file\n"
+        "3. Restart the application"
+    )
+
+
 def _make_stub(label: str) -> FunctionInfo:
     """Return a FunctionInfo that reports the tool is unavailable due to missing key."""
 
     async def _stub(question: str) -> str:
-        return (
-            f"Error: {label} is unavailable because YDC_API_KEY is not set.\n"
-            "To enable this tool:\n"
-            "1. Get an API key from https://you.com/docs/quickstart\n"
-            "2. Set the API key in your environment or in your .env file\n"
-            "3. Restart the application"
-        )
+        return _stub_message(label)
 
     _stub.__doc__ = f"{label} (unavailable - missing YDC_API_KEY)."
     return FunctionInfo.from_fn(_stub, description=_stub.__doc__)
@@ -455,13 +459,7 @@ async def you_contents(tool_config: YouContentsToolConfig, builder: Builder):
         _warn_missing_key_once("contents")
 
         async def _stub(urls: list[str]) -> str:
-            return (
-                "Error: Contents API is unavailable because YDC_API_KEY is not set.\n"
-                "To enable this tool:\n"
-                "1. Get an API key from https://you.com/docs/quickstart\n"
-                "2. Set the API key in your environment or in your .env file\n"
-                "3. Restart the application"
-            )
+            return _stub_message("Contents API")
 
         _stub.__doc__ = "Contents API (unavailable - missing YDC_API_KEY)."
         yield FunctionInfo.from_fn(_stub, description=_stub.__doc__)
@@ -482,48 +480,31 @@ async def you_contents(tool_config: YouContentsToolConfig, builder: Builder):
         Returns:
             str: Extracted page contents formatted as Documents.
         """
-        cache_key = str(sorted(urls))
-        if cache_key in _cache:
-            logger.debug("Cache hit for urls: %s", urls)
-            return _cache[cache_key]
 
-        formats = [f.value for f in tool_config.formats]
-        for attempt in range(tool_config.max_retries):
-            try:
-                coro = contents_tool.api_wrapper.contents_async(
-                    urls,
-                    formats=formats,
-                    crawl_timeout=tool_config.crawl_timeout,
-                )
-                docs = await (asyncio.wait_for(coro, timeout=tool_config.timeout) if tool_config.timeout else coro)
-                if not docs:
-                    raise ValueError("Contents API returned no results.")
+        async def _fetch(_cache_key: str) -> str:
+            formats = [f.value for f in tool_config.formats]
+            docs = await contents_tool.api_wrapper.contents_async(
+                urls,
+                formats=formats,
+                crawl_timeout=tool_config.crawl_timeout,
+            )
+            if not docs:
+                raise ValueError("Contents API returned no results.")
 
-                parts = []
-                for doc in docs:
-                    url = doc.metadata.get("url", "")
-                    title = doc.metadata.get("title", "")
-                    parts.append(
-                        f'<Document href="{url}">\n<title>\n{title}\n</title>\n{doc.page_content}\n</Document>'
-                    )
+            parts = []
+            for doc in docs:
+                url = doc.metadata.get("url", "")
+                title = doc.metadata.get("title", "")
+                parts.append(f'<Document href="{url}">\n<title>\n{title}\n</title>\n{doc.page_content}\n</Document>')
+            return "\n\n---\n\n".join(parts)
 
-                result = "\n\n---\n\n".join(parts)
-                if len(_cache) >= _CACHE_MAX_SIZE:
-                    _cache.pop(next(iter(_cache)))
-                _cache[cache_key] = result
-                return result
-
-            except Exception as e:
-                if attempt == tool_config.max_retries - 1:
-                    error_msg = str(e)
-                    if isinstance(e, ValueError):
-                        return error_msg
-                    if "401" in error_msg or "Unauthorized" in error_msg:
-                        return (
-                            "Error: Contents API failed due to invalid API key (401 Unauthorized).\n"
-                            "Please check your YDC_API_KEY and ensure it is valid.\n"
-                        )
-                    return f"Error: Contents API failed after {tool_config.max_retries} attempts: {error_msg}"
-                await asyncio.sleep(2**attempt)
+        return await _run_with_retries(
+            "Contents API",
+            _fetch,
+            str(sorted(urls)),
+            max_retries=tool_config.max_retries,
+            timeout=tool_config.timeout,
+            cache=_cache,
+        )
 
     yield FunctionInfo.from_fn(_you_contents, description=_you_contents.__doc__)
