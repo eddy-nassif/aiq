@@ -34,20 +34,6 @@ def _make_doc(title="Title", url="https://example.com", description="", page_con
     return SimpleNamespace(metadata=metadata, page_content=page_content)
 
 
-@pytest.fixture(autouse=True)
-def _reset_warn_flag():
-    import you_com.register as reg
-
-    reg._missing_key_warned = False
-    yield
-    reg._missing_key_warned = False
-
-
-@pytest.fixture(autouse=True)
-def _clear_env(monkeypatch):
-    monkeypatch.delenv("YDC_API_KEY", raising=False)
-
-
 @pytest.fixture
 def mock_search(monkeypatch):
     captured = {}

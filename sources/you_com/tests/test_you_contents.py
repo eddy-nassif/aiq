@@ -27,20 +27,6 @@ from you_com.register import YouContentsToolConfig
 from you_com.register import you_contents
 
 
-@pytest.fixture(autouse=True)
-def _reset_warn_flag():
-    import you_com.register as reg
-
-    reg._missing_key_warned = False
-    yield
-    reg._missing_key_warned = False
-
-
-@pytest.fixture(autouse=True)
-def _clear_env(monkeypatch):
-    monkeypatch.delenv("YDC_API_KEY", raising=False)
-
-
 def _make_doc(url: str, title: str, page_content: str = "") -> MagicMock:
     doc = MagicMock()
     doc.metadata = {"url": url, "title": title}

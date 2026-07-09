@@ -26,20 +26,6 @@ from you_com.register import YouResearchToolConfig
 from you_com.register import you_research
 
 
-@pytest.fixture(autouse=True)
-def _reset_warn_flag():
-    import you_com.register as reg
-
-    reg._missing_key_warned = False
-    yield
-    reg._missing_key_warned = False
-
-
-@pytest.fixture(autouse=True)
-def _clear_env(monkeypatch):
-    monkeypatch.delenv("YDC_API_KEY", raising=False)
-
-
 @pytest.fixture
 def mock_research(monkeypatch):
     captured = {}
