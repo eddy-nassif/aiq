@@ -216,6 +216,7 @@ class YouWebSearchToolConfig(YouToolConfig, name="you_web_search"):
     )
     max_content_length: int | None = Field(
         default=50000,
+        ge=0,
         description="If set, truncates each livecrawl result to specified amount of characters. "
         "Can be used to reduce token usage. Defaults to 50000 to bound context size; "
         "set to None for unbounded livecrawl content. "
