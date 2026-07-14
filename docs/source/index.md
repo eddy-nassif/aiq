@@ -13,6 +13,7 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 
 | I want to... | Go to |
 |--------------|-------|
+| Review recent changes | [Changelog](./resources/changelog.md) |
 | Read the docs in order | [Developer Guide](./get-started/developer-guide.md) |
 | Run the blueprint quickly | [Quick Start](./get-started/quick-start.md) |
 | Understand how it works | [Architecture Overview](./architecture/overview.md) |
@@ -101,6 +102,7 @@ Authentication <./deployment/authentication.md>
 Async Job Content Encryption <./deployment/content-encryption.md>
 Observability <./deployment/observability.md>
 Production <./deployment/production.md>
+OpenShell <./deployment/openshell.md>
 Kubernetes <./deployment/kubernetes.md>
 Amazon OpenSearch Serverless <./deployment/aws-opensearch-serverless.md>
 ```
@@ -141,6 +143,7 @@ FAQ <./resources/faq.md>
 ./examples/minimal-shallow-only.md
 ./examples/full-pipeline-llamaindex.md
 ./examples/full-pipeline-web.md
+./examples/azure-ai-search.md
 ./examples/cli-with-local-nims.md
 ./examples/hybrid-frontier-model.md
 ./examples/skills-sandbox/index.md
