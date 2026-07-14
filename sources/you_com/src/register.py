@@ -160,7 +160,7 @@ async def _run_with_retries(
             if attempt == max_retries - 1:
                 error_msg = str(e)
                 if isinstance(e, ValueError):
-                    return error_msg
+                    return f"Error: {error_msg}"
                 if "401" in error_msg or "Unauthorized" in error_msg:
                     return (
                         f"Error: {label} failed due to invalid API key (401 Unauthorized).\n"

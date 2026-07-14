@@ -173,6 +173,7 @@ class TestRunWithRetries:
         cache: dict = {}
         out = await _run_with_retries("T", factory, "q", max_retries=1, timeout=None, cache=cache)
         assert "no results" in out.lower()
+        assert out.startswith("Error: ")
 
     async def test_401_returns_friendly_message(self, monkeypatch):
         monkeypatch.setattr("you_com.register.asyncio.sleep", AsyncMock())
