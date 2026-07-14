@@ -60,7 +60,7 @@ class TestYouWebSearchToolConfig:
         assert config.livecrawl_mode.value == "web"
         assert config.livecrawl_format.value == "markdown"
         assert config.freshness == FreshnessMode.off
-        assert config.max_content_length is None
+        assert config.max_content_length == 50000
         assert config.include_news_results is False
         assert config.timeout is None
 
@@ -123,6 +123,19 @@ class TestYouWebSearchLive:
 
         assert "abcde" in out
         assert "abcdefgh" not in out
+
+    async def test_default_bounds_oversized_livecrawl_content(self, mock_search, monkeypatch):
+        monkeypatch.setenv("YDC_API_KEY", "test-key")
+        config = YouWebSearchToolConfig(max_results=10)
+        builder = MagicMock()
+
+        async with you_web_search(config, builder) as info:
+            mock_search["tool"].api_wrapper.results_async.return_value = [
+                _make_doc(page_content="x" * 200_000) for _ in range(10)
+            ]
+            out = await info.single_fn("q")
+
+        assert len(out) <= 10 * 50000 + 10_000
 
     async def test_news_source_filtered_by_default(self, mock_search, monkeypatch):
         monkeypatch.setenv("YDC_API_KEY", "test-key")

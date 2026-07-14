@@ -21,7 +21,7 @@ Key config:
 - `livecrawl_mode` — `off`, `web`, `news`, `all` (default `web`)
 - `livecrawl_format` — `off`, `markdown`, `html` (default `markdown`)
 - `freshness` — `off`, `day`, `week`, `month`, `year`
-- `max_content_length` — truncate livecrawl content to reduce token usage
+- `max_content_length` — truncate livecrawl content to reduce token usage (default 50000, `None` for unbounded)
 - `include_news_results` — True/False whether or not you want to include results categorized as `news`
 
 ### `you_research`

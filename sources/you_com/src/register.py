@@ -215,9 +215,10 @@ class YouWebSearchToolConfig(YouToolConfig, name="you_web_search"):
         description="Restrict your search to a certain freshness: 'off', 'day', 'week', 'month', 'year'",
     )
     max_content_length: int | None = Field(
-        default=None,
+        default=50000,
         description="If set, truncates each livecrawl result to specified amount of characters. "
-        "Can be used to reduce token usage. "
+        "Can be used to reduce token usage. Defaults to 50000 to bound context size; "
+        "set to None for unbounded livecrawl content. "
         "Titles and descriptions always remain fully in tact, only livecrawl content is truncated.",
     )
     include_news_results: bool = Field(
