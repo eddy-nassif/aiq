@@ -16,12 +16,11 @@
 """Shared fixtures for you_com tool tests."""
 
 import pytest
+import you_com.register as reg
 
 
 @pytest.fixture(autouse=True)
 def _reset_warn_flag():
-    import you_com.register as reg
-
     reg._missing_key_warned = False
     yield
     reg._missing_key_warned = False
